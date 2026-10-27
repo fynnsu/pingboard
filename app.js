@@ -193,6 +193,7 @@ const state = {
   labels: new Map(),      // repo -> {at, items: [{name, color}]}
 
   cursor: null,
+  page: "inbox",
   filter: "all",
   query: "",
   modal: null,
@@ -209,11 +210,21 @@ function scopedKey(suffix) {
 
 function normalizePrefs(raw) {
   const prefs = raw && typeof raw === "object" ? raw : {};
+  const defaultRepo = /^[\w.-]+\/[\w.-]+$/.test(prefs.defaultRepo || "") ? prefs.defaultRepo : DEFAULT_REPO;
+  const trackedRepos = Array.isArray(prefs.trackedRepos) ? [...new Set(prefs.trackedRepos.filter((repo) => typeof repo === "string" && /^[\w.-]+\/[\w.-]+$/.test(repo)))] : [];
   return {
     interval: [30, 60, 120, 300].includes(prefs.interval) ? prefs.interval : 60,
     notify: Boolean(prefs.notify),
     boardWidth: Number(prefs.boardWidth) || BOARD_WIDTH,
-    defaultRepo: /^[\w.-]+\/[\w.-]+$/.test(prefs.defaultRepo || "") ? prefs.defaultRepo : DEFAULT_REPO,
+    defaultRepo,
+    trackedRepos: trackedRepos.length ? trackedRepos : [defaultRepo],
+    workspaceRepo: prefs.workspaceRepo === "" || /^[\w.-]+\/[\w.-]+$/.test(prefs.workspaceRepo || "") ? prefs.workspaceRepo : null,
+    inboxSort: Object.hasOwn(Workflow.sorts, prefs.inboxSort) ? prefs.inboxSort : "oldest",
+    includeDrafts: prefs.includeDrafts !== false,
+    boardGrouping: prefs.boardGrouping === "manual" ? "manual" : "status",
+    boardStatusCollapsed: Object.fromEntries(["updated", "working", "waiting", "later", "new", "resolved"].map((status) => [status,
+      typeof prefs.boardStatusCollapsed?.[status] === "boolean" ? prefs.boardStatusCollapsed[status] : !["updated", "working"].includes(status)])),
+    dailyGoal: Number.isInteger(prefs.dailyGoal) && prefs.dailyGoal >= 1 && prefs.dailyGoal <= 100 ? prefs.dailyGoal : 10,
     following: parseLogins(Array.isArray(prefs.following) ? prefs.following.join(" ") : ""),
     repoProfiles: normalizeRepoProfiles(prefs.repoProfiles)
   };
@@ -265,7 +276,7 @@ function syncFromStorage(event) {
     if (!board) return;
     state.board = board;
     for (const key of [...state.data.keys()]) {
-      if (!pinByKey(key)) {
+      if (!pinByKey(key) && key !== state.cursor) {
         state.data.delete(key);
         state.status.delete(key);
       }
@@ -274,31 +285,37 @@ function syncFromStorage(event) {
   }
 }
 
-function exportBoard() {
+async function exportBoard() {
+  try {
   const payload = {
-    pingboard: 1,
+    pingboard: 2,
     login: state.user.login,
     exportedAt: new Date().toISOString(),
     board: state.board,
     // Deliberately copy only non-secret preferences; the GitHub token is never exported.
-    prefs: normalizePrefs(state.prefs)
+    prefs: normalizePrefs(state.prefs),
+    workspace: await Work.export()
   };
   const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" }));
   el("a", { href: url, download: `pingboard-${state.user.login}.json` }).click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (error) { toast(`Export failed: ${error.message}`, "error"); }
 }
 
 async function importBoard(file) {
   let board = null;
   let prefs = null;
+  let workspace = null;
   try {
     const parsed = JSON.parse(await file.text());
+    if (parsed.pingboard > 2) throw new Error("This backup needs a newer version of Pingboard.");
     board = cleanBoard(parsed.board || parsed);
+    if (parsed.workspace) workspace = WorkspaceStore.validate(parsed.workspace);
     if (parsed && typeof parsed === "object" && Object.prototype.hasOwnProperty.call(parsed, "prefs")) {
       prefs = normalizePrefs(parsed.prefs);
     }
-  } catch {
-    /* handled below */
+  } catch (error) {
+    return toast(`Cannot import backup: ${error.message}`, "error");
   }
   if (!board) return toast("That file is not a Pingboard backup", "error");
   const count = `${board.pins.length} pull request${board.pins.length === 1 ? "" : "s"}`;
@@ -307,27 +324,31 @@ async function importBoard(file) {
     state.prefs = prefs;
     persistPrefs();
     applyBoardWidth();
+    if (Work.repo && !Work.repositories().includes(Work.repo)) Work.setRepo(state.prefs.trackedRepos[0]);
+    Work.tick(true);
   };
   openChoice({
     title: `Import ${count}?`,
-    body: `From ${file.name}.${prefs ? " This backup includes non-secret preferences and repository profiles, but never your GitHub token." : ""} Adding keeps what is on your board now; replacing discards it.`,
+    body: `From ${file.name}.${workspace ? " Includes your inbox, decisions, and activity history." : " This older backup contains pins and settings; existing activity history will be kept."}${prefs ? " Includes non-secret preferences, never your GitHub token." : ""} Adding keeps existing records; replacing replaces the saved board${workspace ? " and workspace" : ""}.`,
     options: [
       {
         key: "Enter",
         label: "Add to my board",
-        run: () => {
+        run: () => perform("Import backup", async () => {
+          if (workspace) await Work.import(workspace, false);
           const groupIds = new Map(board.groups.map((group) => [group.id, ensureGroup(group.name).id]));
           const added = board.pins.filter((pin) => addPin(pin.repo, pin.number, groupIds.get(pin.group))).length;
           applyPrefs();
           toast(`Added ${added} of ${count}`, "ok");
           render();
-        }
+        })
       },
       {
         key: "r",
         label: "Replace my board",
         danger: true,
-        run: () => {
+        run: () => perform("Replace from backup", async () => {
+          if (workspace) await Work.import(workspace, true);
           state.board = board;
           state.data.clear();
           state.status.clear();
@@ -335,7 +356,7 @@ async function importBoard(file) {
           applyPrefs();
           toast(`Board replaced with ${count}`, "ok");
           tick();
-        }
+        })
       }
     ]
   });
@@ -384,13 +405,16 @@ function authHeaders() {
 }
 
 async function rest(method, path, body) {
+  const token = state.token;
   const response = await fetch(`${API_ROOT}${path}`, {
     method,
     headers: { ...authHeaders(), ...(body ? { "Content-Type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined
   });
+  if (token !== state.token) throw new Error("Your GitHub session changed.");
   if (response.status === 401) signOut("GitHub rejected the token.");
   const text = await response.text();
+  if (token !== state.token) throw new Error("Your GitHub session changed.");
   let json = null;
   try {
     json = text ? JSON.parse(text) : null;
@@ -401,15 +425,24 @@ async function rest(method, path, body) {
   return json;
 }
 
-async function gql(query, variables = {}, { strict = false } = {}) {
-  const response = await fetch(`${API_ROOT}/graphql`, {
-    method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({ query, variables })
-  });
+async function gql(query, variables = {}, { strict = false, signal } = {}) {
+  const token = state.token;
+  let response;
+  try {
+    response = await fetch(`${API_ROOT}/graphql`, {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ query, variables }), signal
+    });
+  } catch (error) {
+    if (token !== state.token) throw new Error("Your GitHub session changed.");
+    throw Object.assign(new Error(error.message || "Could not reach GitHub."), { retryable: true });
+  }
+  if (token !== state.token) throw new Error("Your GitHub session changed.");
   const remaining = response.headers.get("x-ratelimit-remaining");
   if (remaining !== null) {
     state.rate = {
+      ...state.rate,
       remaining: Number(remaining),
       limit: Number(response.headers.get("x-ratelimit-limit")),
       reset: Number(response.headers.get("x-ratelimit-reset")) * 1000
@@ -417,10 +450,21 @@ async function gql(query, variables = {}, { strict = false } = {}) {
   }
   if (response.status === 401) signOut("GitHub rejected the token.");
   const json = await response.json().catch(() => null);
+  if (token !== state.token) throw new Error("Your GitHub session changed.");
   // Reads tolerate partial errors (e.g. a ref that cannot be compared) because the
   // rest of the data is usable; a mutation that reports any error did not happen.
   if (!response.ok || !json?.data || (strict && json.errors?.length)) {
-    throw new Error(json?.errors?.[0]?.message || json?.message || `${response.status} ${response.statusText}`);
+    const message = json?.errors?.[0]?.message || json?.message || (response.ok ? "GitHub returned an incomplete response." : `${response.status} ${response.statusText}`);
+    const rateLimited = response.status === 429 || json?.errors?.some((error) => error.type === "RATE_LIMITED") || /rate limit|abuse detection/i.test(message);
+    const retryAfter = response.headers.get("retry-after");
+    const retryAt = rateLimited ? Math.max(Date.now() + 60000,
+      remaining !== null && Number(remaining) === 0 ? state.rate.reset || 0 : 0,
+      retryAfter ? (/^\d+$/.test(retryAfter) ? Date.now() + Number(retryAfter) * 1000 : Date.parse(retryAfter) || 0) : 0) : null;
+    if (retryAt) state.rate.retryAt = retryAt;
+    throw Object.assign(new Error(message), { retryAt,
+      retryable: rateLimited || [408, 500, 502, 503, 504].includes(response.status)
+        || /resource limit|timed? ?out|timeout|something went wrong|couldn.t respond.*time/i.test(message)
+        || (response.ok && !json?.data && !json?.errors?.length) });
   }
   return json.data;
 }
@@ -435,7 +479,8 @@ query($owner: String!, $name: String!, $number: Int!, $baseRef: String!, $headRe
   repository(owner: $owner, name: $name) {
     ref(qualifiedName: $baseRef) { compare(headRef: $headRef) { aheadBy behindBy } }
     pullRequest(number: $number) {
-      id number title url state isDraft updatedAt
+      id number title url state isDraft updatedAt createdAt closedAt mergedAt bodyText
+      mergedBy { login }
       author { login } authorAssociation
       baseRefName headRefOid
       mergeable mergeStateStatus reviewDecision
@@ -444,7 +489,9 @@ query($owner: String!, $name: String!, $number: Int!, $baseRef: String!, $headRe
       additions deletions changedFiles
       labels(first: 40) { nodes { name color } }
       latestOpinionatedReviews(first: 20) { nodes { state author { login } } }
-      comments(last: 5) { nodes { author { login } bodyText createdAt url } }
+      reviews(last: 5) { nodes { id state submittedAt author { login } } }
+      closingIssuesReferences(first: 10) { nodes { number title url } }
+      comments(last: 5) { nodes { id author { login __typename } bodyText createdAt url } }
       commits(last: 1) { nodes { commit {
         oid committedDate
         statusCheckRollup { state contexts(first: 100) {
@@ -643,6 +690,13 @@ async function fetchPR(pin, { force = false } = {}) {
     state: pr.state,
     isDraft: pr.isDraft,
     updatedAt: pr.updatedAt,
+    createdAt: pr.createdAt,
+    closedAt: pr.closedAt,
+    mergedAt: pr.mergedAt,
+    mergedBy: pr.mergedBy?.login,
+    body: pr.bodyText || "No description provided.",
+    linkedIssues: pr.closingIssuesReferences?.nodes || [],
+    rollup: commit?.statusCheckRollup?.state || null,
     author: pr.author?.login || "ghost",
     base,
     headOid: pr.headRefOid,
@@ -657,7 +711,8 @@ async function fetchPR(pin, { force = false } = {}) {
     files: pr.changedFiles,
     labels: pr.labels.nodes,
     reviews: pr.latestOpinionatedReviews.nodes.map((review) => ({ login: review.author?.login || "ghost", state: review.state })),
-    comments: pr.comments.nodes.map((comment) => ({ login: comment.author?.login || "ghost", text: comment.bodyText.slice(0, 700), at: comment.createdAt, url: safeUrl(comment.url) })),
+    activityReviews: (pr.reviews?.nodes || []).map((review) => ({ id: review.id, state: review.state, login: review.author?.login, at: review.submittedAt })),
+    comments: pr.comments.nodes.map((comment) => ({ id: comment.id, bot: comment.author?.__typename === "Bot", login: comment.author?.login || "ghost", text: comment.bodyText.slice(0, 700), at: comment.createdAt, url: safeUrl(comment.url) })),
     behind: repo.ref?.compare?.behindBy ?? null,
     checks,
     fingerprint,
@@ -681,7 +736,7 @@ function hasChanged(pin) {
 function failureIndex() {
   const index = new Map();
   for (const pr of state.data.values()) {
-    if (pr.state !== "OPEN") continue;
+    if (pr.state !== "OPEN" || !pinByKey(pr.key)) continue;
     for (const check of pr.ci.failed) {
       if (!index.has(check.jobKey)) index.set(check.jobKey, []);
       index.get(check.jobKey).push(pr);
@@ -789,32 +844,36 @@ function pumpRefresh() {
     refreshPin(pin, options).finally(() => {
       refreshActive -= 1;
       refreshQueued.delete(pin.key);
-      if (refreshAgain.delete(pin.key) && pinByKey(pin.key)) queueRefresh(pin, { force: true });
+      if (refreshAgain.delete(pin.key) && trackedRef(pin.key)) queueRefresh(pin, { force: true });
       pumpRefresh();
     });
   }
 }
 
 async function refreshPin(pin, options = {}) {
+  const generation = Work.generation;
   state.status.set(pin.key, { ...state.status.get(pin.key), loading: true });
   render();
   try {
     const prev = state.data.get(pin.key);
     const pr = await fetchPR(pin, options);
-    if (!pinByKey(pin.key)) return;   // unpinned while the request was in flight
+    if (generation !== Work.generation || !trackedRef(pin.key)) return;
     state.data.set(pin.key, pr);
+    await Work.observeDetail(pr).catch((error) => { if (generation === Work.generation) Work.fail(error); });
+    if (generation !== Work.generation) return;
     // GitHub computes mergeability lazily; ask again shortly instead of showing a guess for a full interval.
     const unknownTries = pr.state === "OPEN" && pr.mergeable === "UNKNOWN" ? (state.status.get(pin.key)?.unknownTries || 0) + 1 : 0;
     state.status.set(pin.key, { at: Date.now(), loading: false, error: "", unknownTries });
-    if (unknownTries && unknownTries <= 2) setTimeout(() => pinByKey(pin.key) && queueRefresh(pin), 4000);
+    if (unknownTries && unknownTries <= 2) setTimeout(() => generation === Work.generation && trackedRef(pin.key) && queueRefresh(pin), 4000);
     state.lastSync = Date.now();
-    if (!pin.seen) {
+    if (pinByKey(pin.key) && !pin.seen) {
       pin.seen = signature(pr);
       persistBoard();
     }
     if (prev && prev.headOid === pr.headOid && prev.ci.state === "running" && pr.ci.state !== "running") announceCi(pr);
     refreshBaselines();
   } catch (error) {
+    if (generation !== Work.generation) return;
     state.status.set(pin.key, { at: Date.now(), loading: false, error: error.message });
   }
   render();
@@ -839,7 +898,7 @@ function refreshBaselines() {
   const now = Date.now();
   for (const pr of state.data.values()) {
     const key = `${pr.repo}@${pr.base}`;
-    if (pr.state !== "OPEN" || baselineInFlight.has(key)) continue;
+    if (pr.state !== "OPEN" || (!pinByKey(pr.key) && pr.key !== state.cursor) || baselineInFlight.has(key)) continue;
     if (now - (state.baselines.get(key)?.at || 0) <= BASELINE_TTL_MS) continue;
     baselineInFlight.add(key);
     refreshBaseline(pr.repo, pr.base).catch(() => {}).finally(() => {
@@ -851,9 +910,12 @@ function refreshBaselines() {
 
 function tick() {
   if (!state.user) return;
+  Work.tick();
   const now = Date.now();
   const throttled = state.rate.remaining !== null && state.rate.remaining < RATE_FLOOR && now < state.rate.reset;
   if (!throttled) {
+    const selected = state.page === "inbox" && Work.ref(state.cursor);
+    if (selected && now - (state.status.get(selected.key)?.at || 0) > state.prefs.interval * 1000) queueRefresh(selected);
     const slowdown = document.hidden ? HIDDEN_SLOWDOWN : 1;
     for (const pin of state.board.pins) {
       const pr = state.data.get(pin.key);
@@ -867,16 +929,20 @@ function tick() {
 }
 
 function refreshAll() {
+  Work.tick(true);
   for (const pin of state.board.pins) queueRefresh(pin, { force: true });
+  if (state.page === "inbox" && Work.ref(state.cursor)) queueRefresh(Work.ref(state.cursor), { force: true });
   state.baselines.clear();
 }
 
 /* After an action: re-read the PR once GitHub has had a moment. Takes a key so a
    PR that was unpinned in the meantime is simply skipped. */
 function refreshSoon(key) {
+  const generation = Work.generation;
   for (const delay of [1500, 9000]) {
     setTimeout(() => {
-      const pin = pinByKey(key);
+      if (generation !== Work.generation) return;
+      const pin = trackedRef(key);
       if (pin) queueRefresh(pin, { force: true });
     }, delay);
   }
@@ -889,7 +955,11 @@ function pinByKey(key) {
 }
 
 function cursorPin() {
-  return pinByKey(state.cursor);
+  return pinByKey(state.cursor) || (state.page === "inbox" ? Work.ref(state.cursor) : null);
+}
+
+function trackedRef(key) {
+  return pinByKey(key) || Work.ref(key);
 }
 
 function cursorPR() {
@@ -912,6 +982,7 @@ function addPin(repo, number, group = targetGroupId()) {
   persistBoard();
   queueRefresh(pin);
   if (!state.cursor) state.cursor = key;
+  render();
   return true;
 }
 
@@ -922,9 +993,11 @@ function removePin(key) {
   const at = visible.findIndex((item) => item.key === key);
   const index = state.board.pins.indexOf(pin);
   state.board.pins.splice(index, 1);
-  state.data.delete(key);
-  state.status.delete(key);
-  if (state.cursor === key) state.cursor = (visible[at + 1] || visible[at - 1])?.key || null;
+  if (!Work.ref(key)) {
+    state.data.delete(key);
+    state.status.delete(key);
+  }
+  if (state.page === "board" && state.cursor === key) state.cursor = (visible[at + 1] || visible[at - 1])?.key || null;
   persistBoard();
   toast(`Unpinned ${shortRef(pin.repo, pin.number)}`, "info", {
     label: "Undo",
@@ -1057,7 +1130,7 @@ const FILTERS = [
 /* The selected PR stays listed even if a refresh moves it out of the filter, so
    actions never silently retarget to another row. */
 function matchesView(pin) {
-  return pin.key === state.cursor || matchesFilter(pin);
+  return isBoardPin(pin) && (pin.key === state.cursor || matchesFilter(pin));
 }
 
 function setFilter(id) {
@@ -1073,6 +1146,9 @@ function reselect() {
 }
 
 function matchesFilter(pin) {
+  if (!isBoardPin(pin)) return false;
+  const item = Work.ref(pin.key);
+  if (Work.boardQueue !== "all" && (!item || Workflow.queue(item, Work.decision(item)) !== Work.boardQueue)) return false;
   const pr = state.data.get(pin.key);
   const filter = FILTERS.find((item) => item.id === state.filter) || FILTERS[0];
   if (!filter.test(pr)) return false;
@@ -1082,12 +1158,40 @@ function matchesFilter(pin) {
   return query.split(/\s+/).every((term) => haystack.includes(term));
 }
 
+function pinLane(pin) {
+  if (!pin) return null;
+  const item = Work.ref(pin.key) || state.data.get(pin.key) || { state: "OPEN" };
+  return Workflow.boardLane(item, Work.decision(item));
+}
+
+function isBoardPin(pin) { return Work.matchesRepo(pin) && pinLane(pin) !== "purgatory"; }
+
+function boardGroups() {
+  if (state.prefs.boardGrouping === "manual") return state.board.groups;
+  return [["updated", "Updated"], ["working", "In progress"], ["waiting", "Waiting"], ["later", "Later"], ["new", "Untriaged pins"], ["resolved", "Resolved"]]
+    .map(([lane, name]) => ({ id: `status:${lane}`, lane, name, collapsed: state.prefs.boardStatusCollapsed[lane] }));
+}
+
+function setGroupCollapsed(group, collapsed) {
+  if (group.lane) { state.prefs.boardStatusCollapsed[group.lane] = collapsed; persistPrefs(); }
+  else { group.collapsed = collapsed; persistBoard(); }
+}
+
+function setBoardQueue(queue) {
+  Work.boardQueue = queue;
+  reselect();
+  if (queue !== "all") for (const group of boardGroups()) {
+    if (groupPins(group).length) setGroupCollapsed(group, false);
+  }
+  render();
+}
+
 function groupPins(group) {
-  return state.board.pins.filter((pin) => pin.group === group.id && matchesView(pin));
+  return state.board.pins.filter((pin) => (group.lane ? pinLane(pin) === group.lane : pin.group === group.id) && matchesView(pin));
 }
 
 function visiblePins() {
-  return state.board.groups.flatMap((group) => (group.collapsed ? [] : groupPins(group)));
+  return boardGroups().flatMap((group) => (group.collapsed ? [] : groupPins(group)));
 }
 
 function acknowledge(key) {
@@ -1101,12 +1205,13 @@ function acknowledge(key) {
 function setCursor(key) {
   if (key !== state.cursor) acknowledge(state.cursor);
   state.cursor = key;
+  if (state.page === "inbox") Work.select(key);
   acknowledge(key);
   render();
 }
 
 function moveCursor(delta) {
-  const pins = visiblePins();
+  const pins = state.page === "inbox" ? Work.visible() : visiblePins();
   if (!pins.length) return;
   const index = pins.findIndex((pin) => pin.key === state.cursor);
   const next = index === -1 ? 0 : Math.min(pins.length - 1, Math.max(0, index + delta));
@@ -1134,11 +1239,12 @@ function dismissToast(item) {
 }
 
 async function perform(label, run) {
+  const generation = Work.generation;
   try {
     await run();
-    toast(`${label} — done`, "ok");
+    if (generation === Work.generation) toast(`${label} — done`, "ok");
   } catch (error) {
-    toast(`${label} failed: ${error.message}`, "error");
+    if (generation === Work.generation) toast(`${label} failed: ${error.message}`, "error");
   }
 }
 
@@ -1164,7 +1270,8 @@ function undoPending() {
 
 function postComment(pr, body) {
   defer(`${body} → ${shortRef(pr.repo, pr.number)}`, async () => {
-    await rest("POST", `/repos/${pr.repo}/issues/${pr.number}/comments`, { body });
+    const result = await rest("POST", `/repos/${pr.repo}/issues/${pr.number}/comments`, { body });
+    await Work.record(pr, "ci", { id: result.node_id ? `comment:${result.node_id}` : undefined, at: result.created_at, message: body });
     refreshSoon(pr.key);
   });
 }
@@ -1199,16 +1306,20 @@ function updateBranch(pr = cursorPR(), thenComment = null) {
   if (pr.mergeable === "CONFLICTING") return toast(`${shortRef(pr.repo, pr.number)} has conflicts — it cannot be updated from here`, "error");
   const ref = shortRef(pr.repo, pr.number);
   defer(thenComment ? `Update branch + ${thenComment} → ${ref}` : `Update branch → ${ref}`, async () => {
+    const token = state.token;
     const before = pr.headOid;
     await rest("PUT", `/repos/${pr.repo}/pulls/${pr.number}/update-branch`, { expected_head_sha: before });
+    await Work.record(pr, "branch");
     if (!thenComment) return refreshSoon(pr.key);
     // Works from the PR itself, so it still finishes if the PR is unpinned meanwhile.
     const ref = { key: pr.key, repo: pr.repo, number: pr.number };
     for (let attempt = 0; attempt < 15; attempt += 1) {
       await sleep(3000);
+      if (token !== state.token) throw new Error("GitHub session changed; no CI command was posted.");
       const fresh = await fetchPR(ref, { force: true });
       if (fresh.headOid === before) continue;
-      await rest("POST", `/repos/${pr.repo}/issues/${pr.number}/comments`, { body: thenComment });
+      const result = await rest("POST", `/repos/${pr.repo}/issues/${pr.number}/comments`, { body: thenComment });
+      await Work.record(pr, "ci", { id: result.node_id ? `comment:${result.node_id}` : undefined, at: result.created_at, message: thenComment });
       return refreshSoon(pr.key);
     }
     throw new Error(`the updated commit did not appear, so ${thenComment} was not posted`);
@@ -1225,6 +1336,7 @@ async function toggleLabel(pr, name) {
   try {
     if (had) await rest("DELETE", `/repos/${pr.repo}/issues/${pr.number}/labels/${encodeURIComponent(name)}`);
     else await rest("POST", `/repos/${pr.repo}/issues/${pr.number}/labels`, { labels: [name] });
+    await Work.record(pr, "label", { message: `${had ? "Removed" : "Added"} ${name}` });
     toast(`${had ? "Removed" : "Added"} ${name} · ${shortRef(pr.repo, pr.number)}`, "ok");
     // A refresh that started before the change may land after it with the old labels.
     refreshSoon(pr.key);
@@ -1250,7 +1362,8 @@ function approve(pr = cursorPR()) {
       key: "Enter",
       label: "Submit approving review",
       run: () => perform(`Approve ${ref}`, async () => {
-        await rest("POST", `/repos/${pr.repo}/pulls/${pr.number}/reviews`, { event: "APPROVE", commit_id: pr.headOid });
+        const result = await rest("POST", `/repos/${pr.repo}/pulls/${pr.number}/reviews`, { event: "APPROVE", commit_id: pr.headOid });
+        await Work.record(pr, "review", { id: result.node_id ? `review:${result.node_id}` : undefined, at: result.submitted_at });
         refreshSoon(pr.key);
       })
     }]
@@ -1280,7 +1393,9 @@ function mergeMenu(pr = cursorPR()) {
         label: `${method[0].toUpperCase()}${method.slice(1)} and merge now`,
         danger: true,
         run: () => perform(`Merge ${ref}`, async () => {
-          await rest("PUT", `/repos/${pr.repo}/pulls/${pr.number}/merge`, { merge_method: method, sha: pr.headOid });
+          const result = await rest("PUT", `/repos/${pr.repo}/pulls/${pr.number}/merge`, { merge_method: method, sha: pr.headOid });
+          if (!result.merged) throw new Error(result.message || "GitHub did not confirm the merge.");
+          await Work.record(pr, "merge");
           refreshSoon(pr.key);
         })
       }
@@ -1348,18 +1463,25 @@ function flushRender() {
   }
   if (mode !== "board") return;
 
-  const pins = visiblePins();
+  const pins = state.page === "inbox" ? Work.visible() : visiblePins();
   if (!pins.some((pin) => pin.key === state.cursor)) state.cursor = pins[0]?.key || null;
+  if (state.page === "inbox" && state.cursor && !state.status.has(state.cursor)) queueRefresh(Work.ref(state.cursor));
   const index = failureIndex();
 
   renderTop();
-  keepFocus(document.querySelector("#board"), () => renderBoard(index));
-  keepFocus(document.querySelector("#detail"), () => renderDetail(index));
+  WorkUI.renderHeader();
+  document.querySelector(".main").className = `main ${state.page}-view`;
+  document.querySelector("#progress").hidden = state.page !== "progress";
+  if (state.page === "progress") WorkUI.renderProgress();
+  else {
+    keepFocus(document.querySelector("#board"), () => state.page === "inbox" ? WorkUI.renderList() : renderBoard(index));
+    keepFocus(document.querySelector("#detail"), () => state.page === "inbox" ? WorkUI.renderDetail(index) : WorkUI.renderBoardDetail(index));
+  }
   renderOverlays();
   updateTitle();
   if (scrollAfterRender) {
     scrollAfterRender = false;
-    document.querySelector(".row.cursor")?.scrollIntoView({ block: "nearest" });
+    document.querySelector(".row.cursor, .inbox-row.cursor")?.scrollIntoView({ block: "nearest" });
   }
 }
 
@@ -1379,6 +1501,7 @@ function buildShell() {
   return el("div", { class: "shell" }, [
     el("header", { class: "top" }, [
       el("div", { class: "brand" }, [el("span", { class: "brand-dot" }), "Pingboard"]),
+      el("nav", { id: "workspace-nav", class: "workspace-nav", "aria-label": "Workspace pages" }),
       el("div", { class: "chips", id: "chips" }),
       el("input", {
         id: "filter",
@@ -1405,11 +1528,12 @@ function buildShell() {
       }),
       el("div", { class: "top-right" }, [
         el("span", { class: "sync", id: "sync" }),
-        el("button", { class: "btn primary", onclick: () => openAdd(), text: "+ Add PRs" }),
+        el("button", { class: "btn", onclick: () => openAdd(), text: "+ Pin PRs" }),
         el("button", { class: "btn", title: "Refresh everything now", onclick: refreshAll, text: "Refresh" }),
         el("button", { class: "btn", id: "me", title: "Settings", onclick: openSettings })
       ])
     ]),
+    el("div", { id: "workspace-toolbar", class: "workspace-toolbar" }),
     buildMain(),
     el("div", { id: "undo" }),
     el("div", { class: "toasts", id: "toasts" }),
@@ -1445,7 +1569,7 @@ function buildMain() {
     }
   });
   applyBoardWidth(main);
-  main.append(el("section", { class: "board", id: "board" }), divider, el("aside", { class: "detail", id: "detail" }));
+  main.append(el("section", { class: "board", id: "board" }), divider, el("aside", { class: "detail", id: "detail" }), el("section", { id: "progress", class: "progress-page", hidden: true }));
   return main;
 }
 
@@ -1458,8 +1582,11 @@ function applyBoardWidth(main = document.querySelector(".main")) {
 }
 
 function renderTop() {
+  if (state.page !== "board") WorkUI.renderChips();
+  else {
   const counts = Object.fromEntries(FILTERS.map((filter) => [filter.id, 0]));
   for (const pin of state.board.pins) {
+    if (!isBoardPin(pin)) continue;
     const pr = state.data.get(pin.key);
     for (const filter of FILTERS) if (filter.test(pr)) counts[filter.id] += 1;
   }
@@ -1467,6 +1594,7 @@ function renderTop() {
     class: `chip-btn f-${filter.id}${state.filter === filter.id ? " active" : ""}`,
     onclick: () => setFilter(filter.id)
   }, [filter.label, el("span", { class: "count", text: String(counts[filter.id]) })])));
+  }
 
   const busy = refreshActive > 0;
   const rate = state.rate.remaining;
@@ -1576,21 +1704,47 @@ function verdict(pr, index) {
 
 function renderBoard(index) {
   const board = document.querySelector("#board");
-  if (!state.board.pins.length && state.board.groups.length === 1) {
+  if (!state.board.pins.some(isBoardPin)) {
     board.replaceChildren(el("div", { class: "empty" }, [
-      el("h2", { text: "Nothing pinned yet" }),
-      el("p", { text: "Pin the pull requests you are shepherding. Pingboard keeps their CI, branch freshness and review state in one view, and tells you what each one needs next." }),
-      el("button", { class: "btn primary big", onclick: () => openAdd(), text: "+ Add pull requests" })
+      el("h2", { text: "No PRs on this CI board yet" }),
+      el("p", { text: "Take on, wait, or defer a PR in the inbox to follow it here through checks, review, and merge. It stays in the inbox with the same notes and reminders." }),
+      el("div", { class: "btn-row" }, [
+        el("button", { class: "btn primary big", onclick: () => Work.setQueue("new"), text: "Triage PR inbox" }),
+        el("button", { class: "btn", onclick: () => openAdd(), text: "+ Pin PRs" })
+      ])
     ]));
     return;
   }
-  const filtering = state.filter !== "all" || state.query.trim();
+  const filtering = state.filter !== "all" || Work.boardQueue !== "all" || state.query.trim();
+  // Keep the native select mounted during background refreshes. Replacing a
+  // focused select dismisses its popup before the user can choose an option.
+  const header = board.querySelector(":scope > .board-workflow") || el("div", { class: "board-workflow" }, [
+    el("div", {}, [el("h2", { text: "Following through" }), el("p", { class: "small muted", text: "Replies and due reminders return to Updated. Waiting and Later stay out of the way." })]),
+    el("label", { class: "small" }, ["Group by ", el("select", { "aria-label": "Board grouping", onchange: (event) => {
+      state.prefs.boardGrouping = event.target.value;
+      persistPrefs();
+      state.cursor = null;
+      render();
+    } }, [el("option", { value: "status", text: "Triage status" }), el("option", { value: "manual", text: "My groups" })])]),
+    el("label", { class: "small" }, ["Triage status ", el("select", { "aria-label": "Triage status", onchange: (event) => {
+      setBoardQueue(event.target.value);
+    } }, ["all", "new", "needs_me", "waiting", "later", "resolved"].map((queue) => el("option", { value: queue, selected: Work.boardQueue === queue, text: queue === "all" ? "All triage statuses" : Workflow.queues[queue] })))])
+  ]);
+  const groupingSelect = header.querySelector('[aria-label="Board grouping"]');
+  if (groupingSelect.value !== state.prefs.boardGrouping) groupingSelect.value = state.prefs.boardGrouping;
+  header.querySelector("p").textContent = state.prefs.boardGrouping === "status"
+    ? "Replies and due reminders return to Updated. Waiting and Later stay out of the way."
+    : "Your groups and pin order. Switch to Triage status to group follow-ups automatically.";
+  const triageSelect = header.querySelector('[aria-label="Triage status"]');
+  if (triageSelect.value !== Work.boardQueue) triageSelect.value = Work.boardQueue;
+  const groups = board.querySelector(":scope > .board-groups") || el("div", { class: "board-groups" });
+  if (header.parentNode !== board) board.replaceChildren(header, groups);
   const sections = [];
-  for (const group of state.board.groups) {
+  for (const group of boardGroups()) {
     const pins = groupPins(group);
-    if (filtering && !pins.length) continue;
+    if ((filtering || group.lane) && !pins.length) continue;
     sections.push(el("div", {
-      class: "group",
+      class: "group", "data-lane": group.lane,
       ondragover: (event) => {
         if (!dragKey) return;
         event.preventDefault();
@@ -1607,17 +1761,18 @@ function renderBoard(index) {
           class: "group-toggle",
           title: group.collapsed ? "Expand" : "Collapse",
           onclick: () => {
-            group.collapsed = !group.collapsed;
-            persistBoard();
+            setGroupCollapsed(group, !group.collapsed);
             render();
           }
         }, [el("span", { class: "caret", text: group.collapsed ? "▸" : "▾" }), group.name]),
         el("span", { class: "group-count", text: String(pins.length) }),
         groupSummary(pins, index),
         el("span", { class: "spacer" }),
-        el("button", { class: "link-btn", onclick: () => openAdd(group.id), text: "+ Add" }),
-        el("button", { class: "link-btn", onclick: () => renameGroup(group), text: "Rename" }),
-        el("button", { class: "link-btn", onclick: () => deleteGroup(group), text: "Delete" })
+        ...(!group.lane ? [
+          el("button", { class: "link-btn", onclick: () => openAdd(group.id), text: "+ Add" }),
+          el("button", { class: "link-btn", onclick: () => renameGroup(group), text: "Rename" }),
+          el("button", { class: "link-btn", onclick: () => deleteGroup(group), text: "Delete" })
+        ] : [])
       ]),
       !group.collapsed && el("div", { class: "rows" }, pins.length
         ? pins.map((pin) => row(pin, index))
@@ -1625,8 +1780,8 @@ function renderBoard(index) {
     ]));
   }
   if (!sections.length) sections.push(el("div", { class: "empty" }, [el("p", { text: "No pinned pull requests match this filter." })]));
-  else if (!filtering) sections.push(el("button", { class: "link-btn new-group", onclick: newGroup, text: "+ New group" }));
-  board.replaceChildren(...sections);
+  else if (!filtering && state.prefs.boardGrouping === "manual") sections.push(el("button", { class: "link-btn new-group", onclick: newGroup, text: "+ New group" }));
+  groups.replaceChildren(...(Work.error ? [WorkUI.syncStatus()] : []), ...sections);
 }
 
 function groupSummary(pins, index) {
@@ -1649,6 +1804,8 @@ function groupSummary(pins, index) {
 
 function row(pin, index) {
   const pr = state.data.get(pin.key);
+  const item = Work.ref(pin.key);
+  const queue = item && Workflow.queue(item, Work.decision(item));
   const status = state.status.get(pin.key) || {};
   const result = pr ? verdict(pr, index) : { tone: "neutral" };
   const classes = ["row", `tone-${result.tone}`];
@@ -1660,9 +1817,11 @@ function row(pin, index) {
   };
   const props = {
     class: classes.join(" "),
-    draggable: "true",
+    "data-key": pin.key,
+    draggable: String(state.prefs.boardGrouping === "manual"),
     onclick: () => setCursor(pin.key),
     ondragstart: (event) => {
+      if (state.prefs.boardGrouping !== "manual") { event.preventDefault(); return; }
       dragKey = pin.key;
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("text/plain", pr?.url || pin.key);
@@ -1705,6 +1864,7 @@ function row(pin, index) {
       el("div", { class: "row-meta" }, [
         el("a", { class: "num", href: pr.url, target: "_blank", rel: "noopener", title: "Open on GitHub", onclick: (event) => event.stopPropagation(), text: shortRef(pr.repo, pr.number) }),
         authorName(pr.author),
+        queue ? el("span", { class: `queue-label q-${queue}`, text: Workflow.queues[queue] }) : null,
         el("span", { title: new Date(pr.updatedAt).toLocaleString(), text: `updated ${ago(pr.updatedAt)} ago` }),
         review ? el("span", { class: pr.reviewDecision === "APPROVED" ? "t-good" : "t-bad", text: review }) : null,
         ...pr.labels.filter((label) => quick.includes(label.name)).map(labelChip),
@@ -1788,9 +1948,9 @@ function renderDetail(index) {
   blocks.push(el("div", { class: "detail-head" }, [
     el("div", { class: "btn-row detail-tools" }, [
       btn("Open on GitHub ↗", () => openUrl(pr.url)),
-      btn("Move to group…", () => openGroupPicker(pin)),
+      pinByKey(pr.key) ? btn("Move to group…", () => openGroupPicker(pinByKey(pr.key))) : btn("Pin to CI board", () => addPin(pr.repo, pr.number)),
       btn("Refresh", () => queueRefresh(pin, { force: true })),
-      btn("Unpin", () => removePin(pr.key))
+      pinByKey(pr.key) ? btn("Unpin", () => removePin(pr.key)) : null
     ]),
     el("div", { class: "detail-meta" }, [
       el("a", { href: pr.url, target: "_blank", rel: "noopener", text: `${pr.repo}#${pr.number}` }),
@@ -1965,7 +2125,7 @@ function buildAuth() {
   });
   return el("section", { class: "auth" }, [
     el("div", { class: "brand large" }, [el("span", { class: "brand-dot" }), "Pingboard"]),
-    el("p", { class: "auth-sub", text: "One compact board for the pull requests you are shepherding through CI — status, failures, branch freshness and the usual maintainer actions, without a tab per PR." }),
+    el("p", { class: "auth-sub", text: "Give every pull request a next step. Discover new PRs, triage quickly, follow up, shepherd CI, and see your progress." }),
     el("label", { for: "token", text: "GitHub classic token" }),
     input,
     el("p", { class: "muted small" }, [
@@ -2003,6 +2163,8 @@ async function connect() {
     }
     state.user = user;
     loadUserState();
+    state.page = "inbox";
+    await Work.start(user.login);
     tick();
   } catch (error) {
     state.authError = state.authError || error.message;
@@ -2017,6 +2179,10 @@ function rerenderAuth() {
 }
 
 function signOut(message = "") {
+  Work.stop();
+  refreshQueue.length = 0;
+  refreshQueued.clear();
+  refreshAgain.clear();
   localStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(SESSION_KEY);
   state.token = "";
@@ -2030,6 +2196,9 @@ function signOut(message = "") {
   state.authError = message;
   state.data.clear();
   state.status.clear();
+  state.baselines.clear();
+  state.commitFailures.clear();
+  state.labels.clear();
   shellMode = null;
   render();
 }
@@ -2353,6 +2522,9 @@ function openGroupPicker(pin = cursorPin()) {
 }
 
 function openSettings() {
+  const trackedRepos = el("textarea", { rows: 3, spellcheck: "false", "aria-label": "Repositories to discover" });
+  trackedRepos.value = state.prefs.trackedRepos.join("\n");
+  const dailyGoal = el("input", { type: "number", min: 1, max: 100, value: state.prefs.dailyGoal });
   const repoInput = el("input", {
     type: "text",
     value: state.prefs.defaultRepo,
@@ -2429,6 +2601,10 @@ function openSettings() {
     mergeMethod.value = profile.mergeMethod;
   }
   const save = async () => {
+    const repositories = [...new Set(trackedRepos.value.trim().split(/[\s,]+/).filter(Boolean))];
+    if (!repositories.length || repositories.some((value) => !/^[\w.-]+\/[\w.-]+$/.test(value))) return toast("Enter at least one repository as owner/name", "error");
+    const goal = Number(dailyGoal.value);
+    if (!Number.isInteger(goal) || goal < 1 || goal > 100) return toast("Daily goal must be between 1 and 100", "error");
     const repo = repoInput.value.trim();
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return toast("Default repository must look like owner/name", "error");
     const profileRepo = profileSelect.value === NEW_PROFILE ? profileRepoInput.value.trim() : profileSelect.value;
@@ -2436,6 +2612,9 @@ function openSettings() {
     const commands = Object.fromEntries(PROFILE_COMMAND_KEYS.map((key) => [key, commandInputs[key].value.trim()]));
     const hasCommands = PROFILE_COMMAND_KEYS.some((key) => commands[key]);
     state.prefs.defaultRepo = repo;
+    state.prefs.trackedRepos = repositories;
+    state.prefs.dailyGoal = goal;
+    if (Work.repo && !Work.repositories().includes(Work.repo)) Work.setRepo(repositories[0]);
     state.prefs.interval = Number(interval.value);
     state.prefs.notify = notify.checked;
     state.prefs.following = parseLogins(following.value);
@@ -2454,12 +2633,16 @@ function openSettings() {
       if (!state.prefs.notify) toast("Browser notifications are blocked for this site", "error");
     }
     persistPrefs();
+    Work.tick(true);
     closeModal();
   };
   loadProfile();
   mountModal({}, el("div", { class: "modal settings-modal" }, [
     el("div", { class: "settings-body" }, [
       el("h2", { text: `Settings · ${state.user.login}` }),
+      el("label", { class: "field" }, ["Repositories to discover · one owner/repo per line", trackedRepos]),
+      el("p", { class: "muted small", text: "Every open PR, including drafts, appears in your inbox. Removing a repository stops discovery; its pins and history stay saved." }),
+      el("label", { class: "field" }, ["Daily goal · distinct PRs moved forward", dailyGoal]),
       el("label", { class: "field" }, ["Default repository", repoInput]),
       el("p", { class: "muted small", text: "Used for bare PR numbers and for the Add PRs lists." }),
       el("h2", { text: "Repository workflow" }),
@@ -2481,11 +2664,11 @@ function openSettings() {
       el("label", { class: "check-row" }, [notify, "Browser notification when CI finishes"]),
       el("label", { class: "field" }, ["Following", following]),
       el("p", { class: "muted small", text: "Their names are highlighted, and Add PRs gets a Following list." }),
-      el("p", { class: "muted small", text: `Your board is saved in this browser for ${location.host}. Export it to move it to another browser or address, or to keep a copy.` })
+      el("p", { class: "muted small", text: `Your inbox, decisions, activity history, pins, and settings are saved in this browser for ${location.host}. Export them to move to another browser or keep a backup. Discovery runs while Pingboard is open and catches up when you return.` })
     ]),
     el("div", { class: "settings-footer" }, [
       el("div", { class: "settings-backup" }, [
-        el("span", { class: "muted small", text: "Board backup" }),
+        el("span", { class: "muted small", text: "Full workspace backup · includes activity history" }),
         el("div", { class: "choices" }, [
           el("button", { class: "btn", onclick: exportBoard, text: "Export board + settings" }),
           el("button", { class: "btn", onclick: () => file.click(), text: "Import board + settings…" }),
@@ -2513,6 +2696,9 @@ function openSettings() {
 }
 
 const HELP = [
+  ["t / w / s", "inbox: take on / wait / revisit later"],
+  ["d / n / x", "inbox: route / respond / close PR"],
+  ["1 – 7", "inbox: new · needs me · waiting · later · resolved · all · purgatory"],
   ["j / k", "move down / up"],
   ["shift+j / shift+k", "reorder within the group"],
   ["o / Enter", "open the PR on GitHub"],
@@ -2599,6 +2785,13 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)) return;
+  if (state.page === "inbox") {
+    const actions = { t: "take", w: "wait", s: "later", d: "route", n: "comment", x: "close" };
+    if (actions[event.key]) { event.preventDefault(); WorkUI.action(actions[event.key]); return; }
+    if (/^[1-7]$/.test(event.key)) { event.preventDefault(); Work.setQueue(Object.keys(Workflow.queues)[Number(event.key) - 1]); return; }
+    if (["J", "K", "g", "e"].includes(event.key)) return;
+  }
+  if (state.page === "progress" && ![",", "?", "R"].includes(event.key)) return;
   const handler = KEYS[event.key];
   if (!handler) return;
   event.preventDefault();
@@ -2615,6 +2808,14 @@ document.addEventListener("pointerdown", (event) => {
 });
 // A native drag ends the pointer stream with pointercancel, so only dragend may end the drag.
 for (const type of ["pointerup", "pointercancel", "contextmenu"]) document.addEventListener(type, releasePointer);
+// Native select menus can consume pointerup outside the document. Completing or
+// dismissing the menu must release the render hold even without that event.
+for (const type of ["change", "focusout"]) document.addEventListener(type, (event) => {
+  if (event.target instanceof HTMLSelectElement) releasePointer();
+}, true);
+document.addEventListener("keydown", (event) => {
+  if (event.target instanceof HTMLSelectElement && ["Escape", "Enter", "Tab"].includes(event.key)) releasePointer();
+}, true);
 window.addEventListener("blur", releasePointer);
 document.addEventListener("dragend", () => {
   dragKey = null;
@@ -2626,9 +2827,10 @@ document.addEventListener("selectionchange", () => {
 });
 window.addEventListener("resize", () => applyBoardWidth());
 window.addEventListener("storage", syncFromStorage);
+window.addEventListener("online", () => Work.tick(true));
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) tick();
+  if (!document.hidden) { if (Work.ready) Work.reload().catch((error) => Work.fail(error)); tick(); }
 });
 
 setInterval(tick, TICK_MS);
