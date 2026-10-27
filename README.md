@@ -55,7 +55,7 @@ Open PRs refresh every 60 seconds by default (configurable), background tabs fiv
 
 ## Other repositories
 
-`owner/repo#123` or a URL pins a PR from anywhere. Repository-specific workflow — which checks count as CI, the comment commands, the quick labels — lives in `REPO_PROFILES` at the top of `app.js`. Repositories without a profile treat every check as CI and have no CI commands.
+`owner/repo#123` or a URL pins a PR from anywhere. The Settings button also lets you configure a repository's workflow directly in the browser: which checks count as CI, the gating pipeline, comment commands, quick labels, and merge method. These overrides are cached in `localStorage` with the rest of that GitHub user's preferences, so they work on the published site and survive reloads. Built-in defaults live in `REPO_PROFILES` at the top of `app.js`; repositories without a saved or built-in profile start with every check treated as CI and no CI commands.
 
 ## Run it
 
