@@ -366,8 +366,6 @@ a.num:hover { text-decoration: underline; color: var(--text); }
   .row-title { align-items: flex-start; }
   .row-status { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 10px; }
   .group-sum { display: none; }
-  .group-head .link-btn + .link-btn { display: none; }
-  .group-head:hover .link-btn + .link-btn { display: inline; }
 }
 
 @container detail (min-width: 820px) {
