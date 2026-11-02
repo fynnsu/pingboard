@@ -24,9 +24,19 @@ Select a PR to see its description, linked issues, change size, checks, and pers
 
 Use `j` / `k` to move, `1`–`7` to switch queues, and `/` to search. Successful decisions advance to the next PR. Local decisions offer Undo, including removal of their progress credit and any pin introduced by triage. Existing pins and subsequent changes are preserved. Background changes keep the current selection stable until you navigate or act.
 
-The repository selector applies to the inbox, CI board, and progress, and survives reloads. **All repositories** combines them. Pinned repositories are selectable even without full discovery; add them in Settings to discover their entire backlog. **View on CI board** and **Open in PR inbox** open the same PR across views, clearing filters that would hide it.
+The repository selector applies to the inbox, CI board, timeline, and progress, and survives reloads. **All repositories** combines them. Pinned repositories are selectable even without full discovery; add them in Settings to discover their entire backlog. **View on CI board** and **Open in PR inbox** open the same PR across views, clearing filters that would hide it.
 
 An author’s reply or new commits, a submitted review, a draft becoming ready, or a relevant CI completion can bring waiting work back. Reminder deadlines are checked while the app is open and on return. Bot comments and your own replies do not trigger a response notification. Personal notes and reminders stay in Pingboard; GitHub labels and assignments are not used to store them.
+
+## Timeline
+
+**Timeline** is a compact table of PR lifecycles. Numbers and titles stay pinned on the left as you scroll through a shared date axis. Choose the last month, three months (default), or six months, and use **Today →** to jump to the right edge. Open PRs extend to today; merged/closed PRs end at completion. Temporary closed intervals appear dashed. Older PRs continue from the left edge of the range.
+
+Hover, focus, or tap a circle for dates, actors, and event details. Nearby events share a numbered marker. The history includes comments, reviews, commits, labels, draft/ready changes, review requests, reopenings, and merge/close events. Commit timestamps describe the commit, which may differ from when it was pushed. Pink markers identify your private Pingboard triage decisions; historical private decisions are never inferred from GitHub.
+
+The view shares repository, search, and draft filters with the inbox. Filter to **On CI board**, **Open**, **Merged / closed**, or **Purgatory**; Purgatory is excluded elsewhere. Click a title to open that PR in the inbox, or its **CI board ↗** shortcut to continue work. Viewing the timeline never changes triage or earns progress.
+
+The table is one continuously scrollable list. Lightweight PR rows appear immediately; detailed history loads for visible rows first, with a few nearby rows prefetched. Scrolling reprioritizes pending work, and scrolling back reuses cached history. A separate paginated backfill finds recently merged and closed PRs. Requests share discovery's pacing, retries, and quota guards; leaving the view stops additional history requests. Cached history survives reloads, resumes interrupted API pages, and refreshes after ten minutes or a PR update. Pending/partial histories are labeled explicitly and failures offer **Retry history**. The archive is stored separately from credited activity and included in backups. Historical CI runs are not included in this first version; the CI board remains the view for current checks.
 
 ## Progress
 
@@ -99,7 +109,9 @@ Pinned and selected PRs load full CI detail, refreshing every 60 seconds by defa
 
 - `workflow.js`: pure attention, attribution, and daily progress rules.
 - `workspace-store.js`: versioned IndexedDB storage, atomic decisions/events, import validation, and undo.
-- `repository-sync.js`: paginated repository enumeration and reconciliation.
+- `repository-sync.js`: paginated repository enumeration and reconciliation; shared paced read transport for history.
+- `timeline.js`: lifecycle geometry, GitHub event normalization, and on-demand historical synchronization.
+- `timeline-ui.js`: compact lifecycle table, filters, date axis, and accessible event popovers.
 - `workspace.js`: synchronization, persistence, workflow commands, and cross-tab coordination.
 - `workspace-ui.js`: inbox, shared triage controls, and progress views.
 - `app.js`: existing GitHub transport, CI model, pinned board, actions, and shared UI.

@@ -221,6 +221,9 @@ function normalizePrefs(raw) {
     workspaceRepo: prefs.workspaceRepo === "" || /^[\w.-]+\/[\w.-]+$/.test(prefs.workspaceRepo || "") ? prefs.workspaceRepo : null,
     inboxSort: Object.hasOwn(Workflow.sorts, prefs.inboxSort) ? prefs.inboxSort : "oldest",
     includeDrafts: prefs.includeDrafts !== false,
+    timelineDays: [30, 90, 180].includes(prefs.timelineDays) ? prefs.timelineDays : 90,
+    timelineScope: ["all", "board", "open", "resolved", "purgatory"].includes(prefs.timelineScope) ? prefs.timelineScope : "all",
+    timelineSort: Object.hasOwn(Workflow.sorts, prefs.timelineSort) ? prefs.timelineSort : "newest",
     boardGrouping: prefs.boardGrouping === "manual" ? "manual" : "status",
     boardStatusCollapsed: Object.fromEntries(["updated", "working", "waiting", "later", "new", "resolved"].map((status) => [status,
       typeof prefs.boardStatusCollapsed?.[status] === "boolean" ? prefs.boardStatusCollapsed[status] : !["updated", "working"].includes(status)])),
@@ -1472,7 +1475,10 @@ function flushRender() {
   WorkUI.renderHeader();
   document.querySelector(".main").className = `main ${state.page}-view`;
   document.querySelector("#progress").hidden = state.page !== "progress";
+  document.querySelector("#timeline").hidden = state.page !== "timeline";
+  if (state.page !== "timeline") TimelineUI.hideTip();
   if (state.page === "progress") WorkUI.renderProgress();
+  else if (state.page === "timeline") TimelineUI.render();
   else {
     keepFocus(document.querySelector("#board"), () => state.page === "inbox" ? WorkUI.renderList() : renderBoard(index));
     keepFocus(document.querySelector("#detail"), () => state.page === "inbox" ? WorkUI.renderDetail(index) : WorkUI.renderBoardDetail(index));
@@ -1569,7 +1575,7 @@ function buildMain() {
     }
   });
   applyBoardWidth(main);
-  main.append(el("section", { class: "board", id: "board" }), divider, el("aside", { class: "detail", id: "detail" }), el("section", { id: "progress", class: "progress-page", hidden: true }));
+  main.append(el("section", { class: "board", id: "board" }), divider, el("aside", { class: "detail", id: "detail" }), el("section", { id: "progress", class: "progress-page", hidden: true }), el("section", { id: "timeline", class: "timeline-page", hidden: true }));
   return main;
 }
 
@@ -1582,6 +1588,7 @@ function applyBoardWidth(main = document.querySelector(".main")) {
 }
 
 function renderTop() {
+  document.querySelector("#chips").hidden = ["timeline", "progress"].includes(state.page);
   if (state.page !== "board") WorkUI.renderChips();
   else {
   const counts = Object.fromEntries(FILTERS.map((filter) => [filter.id, 0]));
@@ -2791,7 +2798,7 @@ document.addEventListener("keydown", (event) => {
     if (/^[1-7]$/.test(event.key)) { event.preventDefault(); Work.setQueue(Object.keys(Workflow.queues)[Number(event.key) - 1]); return; }
     if (["J", "K", "g", "e"].includes(event.key)) return;
   }
-  if (state.page === "progress" && ![",", "?", "R"].includes(event.key)) return;
+  if (["progress", "timeline"].includes(state.page) && ![",", "?", "R"].includes(event.key)) return;
   const handler = KEYS[event.key];
   if (!handler) return;
   event.preventDefault();

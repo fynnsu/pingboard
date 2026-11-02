@@ -6,7 +6,7 @@ const WorkUI = {
   },
   renderHeader() {
     const nav = document.querySelector("#workspace-nav");
-    keepFocus(nav, () => nav.replaceChildren(...[["inbox", "PR inbox"], ["board", "CI board"], ["progress", "Progress"]].map(([page, label]) => el("button", {
+    keepFocus(nav, () => nav.replaceChildren(...[["inbox", "PR inbox"], ["board", "CI board"], ["timeline", "Timeline"], ["progress", "Progress"]].map(([page, label]) => el("button", {
       class: `nav-btn${state.page === page ? " active" : ""}`, "aria-pressed": String(state.page === page), text: label, onclick: () => Work.setPage(page)
     }))));
     const bar = document.querySelector("#workspace-toolbar");

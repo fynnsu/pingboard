@@ -4,7 +4,7 @@
    The views in workspace-ui.js only issue commands and render these records. */
 const Work = {
   ready: false, error: "", generation: 0, repo: "", queue: "new", boardQueue: "all",
-  items: new Map(), decisions: new Map(), events: new Map(), meta: new Map(), unsavedEvents: new Map(),
+  items: new Map(), decisions: new Map(), events: new Map(), meta: new Map(), history: new Map(), unsavedEvents: new Map(),
   async start(login) {
     this.stop();
     const generation = this.generation;
@@ -42,6 +42,19 @@ const Work = {
         },
         items: () => [...this.items.values()], changed: () => render()
       });
+      this.timeline = new TimelineSync({
+        reader: this.syncer, records: () => this.history,
+        save: async (record) => {
+          if (generation !== this.generation) return;
+          await storage.put("history", record);
+          if (generation !== this.generation) return;
+          this.history.set(record.id, record);
+          this.channel?.postMessage("changed");
+        },
+        // Backfilling an archive must not fabricate arrivals, wake-ups or credit.
+        observe: (items) => this.observe(items.filter((item) => !this.items.has(item.id)), { historical: true }, generation),
+        active: () => state.page === "timeline", changed: () => render()
+      });
       navigator.storage?.persist?.().catch(() => {});
       this.tick(true);
     } catch (error) { if (generation === this.generation) this.fail(error); }
@@ -50,6 +63,9 @@ const Work = {
   stop() {
     this.generation += 1;
     this.syncer?.stop();
+    this.timeline?.stop();
+    this.timeline = null;
+    if (typeof TimelineUI !== "undefined") TimelineUI.reset();
     this.channel?.close();
     this.storage?.close();
     this.syncer = null;
@@ -57,7 +73,7 @@ const Work = {
     this.storage = null;
     this.ready = false;
     this.saving = false;
-    for (const name of ["items", "decisions", "events", "meta", "unsavedEvents"]) this[name] = new Map();
+    for (const name of ["items", "decisions", "events", "meta", "history", "unsavedEvents"]) this[name] = new Map();
   },
   fail(error) {
     this.error = `Local history could not be saved: ${error.message}. Retry or export before closing this tab.`;
@@ -68,7 +84,7 @@ const Work = {
     if (!this.storage) return;
     const data = await this.storage.read();
     if (generation !== this.generation) return;
-    for (const name of ["items", "decisions", "events", "meta"]) this[name] = new Map(data[name].map((record) => [record.id, record]));
+    for (const name of WorkspaceStore.names) this[name] = new Map(data[name].map((record) => [record.id, record]));
     render();
   },
   async changed() {
@@ -187,6 +203,7 @@ const Work = {
       const item = { ...before, ...next, firstSeenAt: before?.firstSeenAt || now,
         origin: before?.origin || (next.createdAt && new Date(next.createdAt) >= new Date(meta.startedAt || now) ? "arrival" : "backlog") };
       const events = [];
+      if (meta.historical) return { item: { ...item, origin: "backlog" }, decision, events };
       const event = (kind, at, extra = {}) => ({ id: `${item.id}:${kind}:${at}`, itemId: item.id, repo: item.repo, number: item.number, kind, at, observedAt: now, source: "github", ...extra });
       if (!before && item.origin === "arrival") events.push(event("arrival", item.createdAt, { actor: item.author }));
       if (item.state !== "OPEN" && (before?.state === "OPEN" || (!before && item.origin === "arrival"))) {
@@ -324,6 +341,8 @@ const Work = {
     WorkspaceStore.validate(snapshot);
     const login = this.login;
     this.syncer?.stop();
+    this.timeline?.stop();
+    await this.timeline?.task;
     await Promise.allSettled([...this.syncer?.running.values() || []]);
     try {
       await this.storage.restore(snapshot, replace);

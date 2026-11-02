@@ -4,9 +4,11 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFixture } from "./fixture.mjs";
+import { addTimelineFixture } from "./timeline-fixture.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const fixture = createFixture(12);
+addTimelineFixture(fixture);
 fixture.addRepository("acme/runner", 6);
 const seed = `<script>
 if (!localStorage.getItem('pingboard.preview.seeded')) {

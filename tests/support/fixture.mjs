@@ -41,6 +41,17 @@ export function createFixture(total = 57) {
       const repo = `${variables.owner}/${variables.name}`;
       const repositoryItems = fixture.repositories.get(repo);
       if (variables.owner && !repositoryItems) return { json: { errors: [{ message: `Mock repository ${repo} is not configured.` }] } };
+      if (query.includes("PingboardTimelineClosed")) {
+        const items = repositoryItems.filter((item) => item.state !== "OPEN").sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+        const offset = Number(variables.cursor || 0);
+        return { json: { data: { repository: { pullRequests: { nodes: items.slice(offset, offset + 20), pageInfo: { hasNextPage: offset + 20 < items.length, endCursor: String(offset + 20) } } } } } };
+      }
+      if (query.includes("PingboardTimeline")) {
+        const item = [...fixture.repositories.values()].flat().find((item) => item.id === variables.id);
+        const events = (item?.timeline || []).filter((event) => new Date(event.createdAt || event.submittedAt || event.commit?.committedDate) >= new Date(variables.since));
+        const offset = Number(variables.cursor || 0);
+        return { json: { data: { node: item ? { timelineItems: { nodes: events.slice(offset, offset + 50), pageInfo: { hasNextPage: offset + 50 < events.length, endCursor: String(offset + 50) } } } : null } } };
+      }
       if (query.includes("PingboardInventory")) {
         if (fixture.failSecondPage && variables.cursor) return { status: 503, json: { message: "Simulated second page failure" } };
         const field = variables.order?.field === "CREATED_AT" ? "createdAt" : "updatedAt";

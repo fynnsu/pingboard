@@ -3,13 +3,13 @@
 /* Versioned, per-login IndexedDB persistence. Decisions and their events commit
    together; read-modify-write transactions also serialize changes across tabs. */
 class WorkspaceStore {
-  static names = ["items", "decisions", "events", "meta"];
+  static names = ["items", "decisions", "events", "meta", "history"];
   constructor(login) { this.name = `pingboard.workspace.v1.${login.toLowerCase()}`; }
   async open() {
     this.db = await new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.name, 1);
+      const request = indexedDB.open(this.name, 2);
       request.onupgradeneeded = () => {
-        for (const name of WorkspaceStore.names) request.result.createObjectStore(name, { keyPath: "id" });
+        for (const name of WorkspaceStore.names) if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name, { keyPath: "id" });
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
@@ -112,21 +112,22 @@ class WorkspaceStore {
     });
   }
   static validate(snapshot) {
-    if (snapshot?.version !== 1 || !WorkspaceStore.names.every((name) => Array.isArray(snapshot[name]))) throw new Error("Unsupported workspace backup.");
+    if (snapshot?.version !== 1 || !["items", "decisions", "events", "meta"].every((name) => Array.isArray(snapshot[name])) || (snapshot.history !== undefined && !Array.isArray(snapshot.history))) throw new Error("Unsupported workspace backup.");
     const clean = { version: 1 };
     for (const name of WorkspaceStore.names) {
       // Older backups may contain the retired fixed-batch feature.
-      clean[name] = snapshot[name].filter((record) => name !== "meta" || record?.id !== "session").map((record) => {
+      clean[name] = (snapshot[name] || []).filter((record) => name !== "meta" || record?.id !== "session").map((record) => {
         if (!record || typeof record.id !== "string" || !record.id || record.id.length > 500) throw new Error("Invalid workspace record.");
         // Whitelists keep tokens and unexpected backup properties out of storage/exports.
         const fields = {
           items: ["id", "kind", "key", "repo", "number", "title", "url", "state", "isDraft", "author", "createdAt", "updatedAt", "closedAt", "mergedAt", "mergedBy", "headOid", "rollup", "reviewDecision", "labels", "comments", "reviews", "additions", "deletions", "files", "body", "linkedIssues", "firstSeenAt", "origin"],
           decisions: ["id", "revision", "status", "triagedAt", "updatedAt", "dueAt", "waitingFor", "note", "reason"],
           events: ["id", "itemId", "repo", "number", "kind", "actor", "at", "observedAt", "source", "state", "message", "reverted"],
-          meta: ["id", "repo", "startedAt", "lastSync", "complete", "updatedAt", "scan", "retryAt"]
+          meta: ["id", "repo", "startedAt", "lastSync", "complete", "updatedAt", "scan", "retryAt"],
+          history: ["id", "repo", "kind", "since", "syncedAt", "updatedAt", "sourceUpdatedAt", "cursor", "complete", "events"]
         }[name];
         const value = Object.fromEntries(fields.filter((field) => record[field] !== undefined).map((field) => [field, record[field]]));
-        for (const field of ["createdAt", "updatedAt", "closedAt", "mergedAt", "firstSeenAt", "triagedAt", "dueAt", "at", "observedAt", "startedAt", "lastSync"]) {
+        for (const field of ["createdAt", "updatedAt", "closedAt", "mergedAt", "firstSeenAt", "triagedAt", "dueAt", "at", "observedAt", "startedAt", "lastSync", "since", "syncedAt", "sourceUpdatedAt"]) {
           if (value[field] != null && (typeof value[field] !== "string" || !Number.isFinite(Date.parse(value[field])))) throw new Error("Invalid date in backup.");
         }
         for (const field of ["title", "url", "author", "body", "note", "reason", "message", "actor", "repo"]) {
@@ -142,6 +143,14 @@ class WorkspaceStore {
         }
         if (name === "decisions" && !["new", "needs_me", "waiting", "later", "purgatory"].includes(value.status)) throw new Error("Invalid triage decision in backup.");
         if (name === "events" && (typeof value.itemId !== "string" || typeof value.kind !== "string" || !Number.isFinite(Date.parse(value.at)))) throw new Error("Invalid activity in backup.");
+        if (name === "history") {
+          if (!["pr", "inventory"].includes(value.kind) || !/^[\w.-]+\/[\w.-]+$/.test(value.repo) || !Number.isFinite(Date.parse(value.since)) || typeof value.complete !== "boolean" || (value.cursor != null && typeof value.cursor !== "string") || !Array.isArray(value.events)) throw new Error("Invalid timeline history in backup.");
+          value.events = value.events.map((event) => {
+            if (!event || !["id", "kind", "label"].every((field) => typeof event[field] === "string") || !Number.isFinite(Date.parse(event.at))) throw new Error("Invalid timeline event in backup.");
+            if (["actor", "message", "url"].some((field) => event[field] != null && typeof event[field] !== "string")) throw new Error("Invalid timeline event details in backup.");
+            return Object.fromEntries(["id", "kind", "label", "at", "actor", "message", "url"].filter((field) => event[field] !== undefined).map((field) => [field, event[field]]));
+          });
+        }
         if (name === "meta" && value.retryAt != null && (!Number.isFinite(value.retryAt) || value.retryAt < 0)) throw new Error("Invalid discovery retry time in backup.");
         if (name === "meta" && value.scan != null) {
           const scan = value.scan;
