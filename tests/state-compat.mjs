@@ -123,7 +123,7 @@ const head = option("head");
 const base = option("base");
 if (!head) throw new Error("usage: bun state-compat.mjs --head <dir> [--base <dir>]");
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(process.env.PINGBOARD_BROWSER_CHANNEL ? { channel: process.env.PINGBOARD_BROWSER_CHANNEL } : {});
 const fixtureDir = path.join(here, "fixtures");
 for (const name of (await readdir(fixtureDir)).filter((file) => file.endsWith(".json")).sort()) {
   const fixture = JSON.parse(await readFile(path.join(fixtureDir, name), "utf8"));

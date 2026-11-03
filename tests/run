@@ -4,9 +4,19 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-bun install --frozen-lockfile
-bunx playwright install ${CI:+--with-deps} chromium
+if command -v bun >/dev/null 2>&1; then
+  bun install --frozen-lockfile
+  runner=bun
+else
+  npm install --no-package-lock
+  runner=node
+fi
+
+# An installed Chrome/Edge can run the suite without a browser download.
+if [ -z "${PINGBOARD_BROWSER_CHANNEL:-}" ]; then
+  "$runner" node_modules/playwright/cli.js install ${CI:+--with-deps} chromium
+fi
 
 for check in *.mjs; do
-  bun "$check" --head .. ${PINGBOARD_BASE:+--base "$PINGBOARD_BASE"}
+  "$runner" "$check" --head .. ${PINGBOARD_BASE:+--base "$PINGBOARD_BASE"}
 done
