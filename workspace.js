@@ -289,7 +289,7 @@ const Work = {
       const addedGroup = addedPin?.group;
       const addedIndex = state.board.pins.indexOf(addedPin);
       if (result || addedPin) {
-        if (announce) toast(`${shortRef(item.repo, item.number)} → ${Workflow.queues[values.status]}${track ? " · on CI board" : ""}`, "ok", undo ? {
+        if (announce) toast(`${shortRef(item.repo, item.number)} → ${Workflow.queues[values.status]}${track ? " · on board" : ""}`, "ok", undo ? {
           label: "Undo", run: async () => {
             if (generation !== this.generation) return;
             try {

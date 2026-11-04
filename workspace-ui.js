@@ -6,7 +6,7 @@ const WorkUI = {
   },
   renderHeader() {
     const nav = document.querySelector("#workspace-nav");
-    keepFocus(nav, () => nav.replaceChildren(...[["inbox", "PR inbox"], ["board", "CI board"], ["timeline", "Timeline"], ["progress", "Progress"]].map(([page, label]) => el("button", {
+    keepFocus(nav, () => nav.replaceChildren(...[["inbox", "Inbox"], ["board", "Board"], ["timeline", "Timeline"], ["progress", "Progress"]].map(([page, label]) => el("button", {
       class: `nav-btn${state.page === page ? " active" : ""}`, "aria-pressed": String(state.page === page), text: label, onclick: () => Work.setPage(page)
     }))));
     const bar = document.querySelector("#workspace-toolbar");
@@ -74,7 +74,7 @@ const WorkUI = {
     const empty = state.query ? "No PRs match your search." : Work.queue === "purgatory" ? "No PRs in purgatory." : this.complete() ? Work.queue === "new" ? `All caught up${state.prefs.includeDrafts ? "" : " for non-draft PRs"}. Every open PR in this view has a next step.` : "Nothing in this queue." : "Waiting for complete discovery. Your inbox may still change.";
     board.replaceChildren(
       el("div", { class: "inbox-heading" }, [el("h2", { text: title }), el("span", { class: "muted small", text: `${items.length} shown · ${Workflow.sorts[state.prefs.inboxSort].toLowerCase()} · drafts ${state.prefs.includeDrafts ? "included" : "hidden"}` })]),
-      ...(Work.queue === "purgatory" ? [el("p", { class: "sync-note", text: "Set aside without closing on GitHub. Hidden from the other inbox tabs and the CI board until you restore them." })] : []),
+      ...(Work.queue === "purgatory" ? [el("p", { class: "sync-note", text: "Set aside without closing on GitHub. Hidden from the other tabs and the board until you restore them." })] : []),
       this.syncStatus(),
       items.length ? el("div", { class: "inbox-list", "aria-label": title }, items.map((item) => {
         const decision = Work.decision(item);
@@ -89,7 +89,7 @@ const WorkUI = {
             item.isDraft ? el("span", { class: "badge", text: "Draft" }) : null,
             item.reviewRequested ? el("span", { class: "t-warn", text: "Review requested" }) : null,
             el("span", { class: `queue-label q-${queue}`, text: item.state !== "OPEN" ? item.state.toLowerCase() : Workflow.queues[queue] }),
-            pinByKey(item.key) && queue !== "purgatory" ? el("span", { class: "badge", text: "On CI board" }) : null
+            pinByKey(item.key) && queue !== "purgatory" ? el("span", { class: "badge", text: "On board" }) : null
           ]),
           el("span", { class: "inbox-row-context", text: decision?.reason || (due ? "Follow-up due" : decision?.note) || (item.state !== "OPEN" ? `${item.state === "MERGED" ? "Merged" : "Closed"} on GitHub` : decision?.triagedAt ? "Ready for your next action" : item.origin === "backlog" ? "Existing backlog · awaiting your decision" : "New arrival") }),
           el("span", { class: "row-meta" }, [
@@ -108,7 +108,7 @@ const WorkUI = {
     const decision = Work.decision(item);
     const queue = Workflow.queue(item, decision);
     const btn = (label, type) => el("button", { class: "btn", disabled: !Work.ready || Work.saving || Boolean(Work.error), text: label, onclick: () => this.action(type, item) });
-    const openInbox = el("button", { class: "btn triage-open-inbox", type: "button", text: "Open in PR inbox", onclick: () => Work.openItem(item, "inbox") });
+    const openInbox = el("button", { class: "btn triage-open-inbox", type: "button", text: "Open in Inbox", onclick: () => Work.openItem(item, "inbox") });
     if (queue === "purgatory") return el("section", { class: "triage-panel", "aria-label": "Personal triage" }, [
       el("h3", { text: "Purgatory" }), el("p", { class: "small muted", text: "This PR stays hidden until you choose to bring it back. GitHub updates and reminders will not resurface it." }),
       decision?.note ? el("p", { class: "triage-note", text: decision.note }) : null,
@@ -126,8 +126,8 @@ const WorkUI = {
         compact ? openInbox : null
       ]) : el("p", { class: "small muted", text: "Resolved on GitHub. Your decisions and activity remain saved." }),
       compact && item.state !== "OPEN" ? el("div", { class: "btn-row triage-actions" }, [el("span", { class: "spacer" }), openInbox]) : null,
-      !compact && (pinByKey(item.key) ? this.button("View on CI board", () => Work.openItem(item, "board"))
-        : el("p", { class: "small muted", text: "Take on, Waiting, and Later add this PR to the matching CI board group." }))
+      !compact && (pinByKey(item.key) ? this.button("View on Board", () => Work.openItem(item, "board"))
+        : el("p", { class: "small muted", text: "Take on, Waiting, and Later add this PR to the matching board group." }))
     ]);
     return node;
   },

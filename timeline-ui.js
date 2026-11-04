@@ -41,7 +41,7 @@ const TimelineUI = {
         el("div", {}, [el("h1", { text: "PR timeline" }), el("p", { class: "muted", text: "From opened to done. Hover or focus a circle to explore what changed." })]),
         el("div", { class: "timeline-controls" }, [
           select("Time range", [[30, "Last month"], [90, "Last 3 months"], [180, "Last 6 months"]], (value) => this.set({ timelineDays: Number(value) })),
-          select("Timeline PRs", [["all", "All PRs"], ["board", "On CI board"], ["open", "Open"], ["resolved", "Merged / closed"], ["purgatory", "Purgatory"]], (value) => this.set({ timelineScope: value })),
+          select("Timeline PRs", [["all", "All PRs"], ["board", "On board"], ["open", "Open"], ["resolved", "Merged / closed"], ["purgatory", "Purgatory"]], (value) => this.set({ timelineScope: value })),
           select("Timeline sort", Object.entries(Workflow.sorts), (value) => this.set({ timelineSort: value })),
           el("label", { class: "check-row small" }, [el("input", { type: "checkbox", "aria-label": "Timeline include drafts", onchange: (event) => this.set({ includeDrafts: event.target.checked }) }), "Include drafts"]),
           WorkUI.button("Today →", () => { const scroller = host.querySelector(".timeline-scroll"); scroller.scrollLeft = scroller.scrollWidth; })
@@ -208,7 +208,7 @@ const TimelineUI = {
       el("th", { scope: "row", class: "timeline-label" }, [
         el("button", { class: "timeline-title", title: item.title, "data-timeline-focus": item.id, onclick: () => Work.openItem(item, "inbox") }, [el("span", { class: "timeline-number", text: `#${item.number}` }), el("span", { text: item.title })]),
         el("div", { class: "timeline-meta" }, [el("span", { text: `${Work.repo ? item.author : item.repo} · ${status}` }),
-          ...(pinByKey(item.key) ? [el("button", { class: "link-btn", text: "CI board ↗", "aria-label": `Open ${item.key} on CI board`, onclick: () => Work.openItem(item, "board") })] : []),
+          ...(pinByKey(item.key) ? [el("button", { class: "link-btn", text: "Board ↗", "aria-label": `Open ${item.key} on board`, onclick: () => Work.openItem(item, "board") })] : []),
           ...(!ready ? [el("span", { class: "timeline-coverage", title: Work.timeline?.errors.get(item.id)?.message || "The line shows this PR's lifetime; activity markers are still loading.", text: record?.events.length ? "Partial history" : "History pending" })] : [])
         ])
       ]), el("td", { class: "timeline-cell" }, [lane])

@@ -30,7 +30,7 @@ try {
   await page.keyboard.press("t");
   await page.waitForFunction(() => Work.counts().new === 56 && !Work.saving);
   assert.equal(await page.evaluate(() => state.cursor), "acme/widgets#2", "triage advances to the next PR");
-  assert.equal(await page.evaluate(() => Boolean(pinByKey("acme/widgets#1"))), true, "Take on adds the PR to the CI board");
+  assert.equal(await page.evaluate(() => Boolean(pinByKey("acme/widgets#1"))), true, "Take on adds the PR to the board");
   assert.equal(await page.evaluate(() => Workflow.progress([...Work.events.values()], Work.login).moved), 1);
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await page.waitForFunction(() => Work.counts().new === 57);

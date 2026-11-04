@@ -28,7 +28,7 @@ export function createFixture(total = 57) {
   fixture.addRepository = (repo, count = 4) => {
     const items = Array.from({ length: count }, (_, index) => fixture.makeItem(index + 1, {
       title: `${repo.split("/")[1]}: ${titles[index % titles.length]}`,
-      bodyText: `A change to ${repo}. This repository has its own PRs, triage decisions, and CI board.`
+      bodyText: `A change to ${repo}. This repository has its own PRs, triage decisions, and board.`
     }, repo));
     fixture.repositories.set(repo, items);
     return items;

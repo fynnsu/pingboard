@@ -38,7 +38,7 @@ try {
   await page.keyboard.press("t");
   await page.waitForFunction(() => !Work.saving && Boolean(pinByKey("acme/widgets#1")));
   await page.evaluate(() => Work.setQueue("needs_me"));
-  await page.getByRole("button", { name: "View on CI board", exact: true }).click();
+  await page.getByRole("button", { name: "View on Board", exact: true }).click();
   await page.waitForFunction(() => state.page === "board" && state.cursor === "acme/widgets#1");
   assert.deepEqual(await rowKeys(), ["acme/widgets#1"]);
   assert.match(await page.locator("#board .row").innerText(), /Needs me/);
@@ -56,10 +56,10 @@ try {
   await page.waitForFunction(() => !state.cursor);
   assert.deepEqual(await rowKeys(), []);
   await page.getByRole("combobox", { name: "Triage status", exact: true }).selectOption("waiting");
-  await page.getByRole("button", { name: "Open in PR inbox", exact: true }).click();
+  await page.getByRole("button", { name: "Open in Inbox", exact: true }).click();
   await page.waitForFunction(() => state.page === "inbox" && state.cursor === "acme/widgets#1");
   assert.match(await page.locator(".triage-panel").innerText(), /Wait for the new CI run/);
-  assert.match(await page.locator('.inbox-row[data-key="acme/widgets#1"]').innerText(), /On CI board/);
+  assert.match(await page.locator('.inbox-row[data-key="acme/widgets#1"]').innerText(), /On board/);
 
   await selectRepo("acme/runner");
   await page.waitForFunction(() => state.cursor === "acme/runner#1");
@@ -68,7 +68,7 @@ try {
   assert.equal(await page.evaluate(() => Work.decision(Work.ref(state.cursor)) || null), null, "equal PR numbers in different repos have separate decisions");
   await page.getByRole("button", { name: "Take on · t", exact: true }).click();
   await page.waitForFunction(() => !Work.saving && Boolean(pinByKey("acme/runner#1")));
-  await page.getByRole("button", { name: "CI board", exact: true }).click();
+  await page.getByRole("button", { name: "Board", exact: true }).click();
   await page.waitForFunction(() => state.page === "board");
   // A shared filter is still applied across repository changes; reset it explicitly.
   await page.getByRole("combobox", { name: "Triage status", exact: true }).selectOption("all");
@@ -83,7 +83,7 @@ try {
   await page.reload();
   await ready();
   assert.equal(await page.evaluate(() => Work.repo), "", "All repositories survives reload");
-  await page.getByRole("button", { name: "CI board", exact: true }).click();
+  await page.getByRole("button", { name: "Board", exact: true }).click();
   assert.deepEqual(await rowKeys(), ["acme/widgets#1", "acme/runner#1"], "both working sets survive reload");
   await selectRepo("acme/runner");
   await page.reload();
@@ -91,7 +91,7 @@ try {
   assert.equal(await page.evaluate(() => Work.repo), "acme/runner", "selected repository survives reload");
   await page.getByRole("button", { name: "Progress", exact: true }).click();
   assert.equal(await page.evaluate(() => Work.scopedEvents().every((event) => event.repo === "acme/runner")), true);
-  console.log("Inbox → CI board → follow-up, shared filters, repository isolation, and reload passed.");
+  console.log("Inbox → Board → follow-up, shared filters, repository isolation, and reload passed.");
 
   // Undo must preserve manual organization and must not overwrite a newer decision.
   await selectRepo("acme/widgets");
@@ -138,9 +138,9 @@ try {
   await page.evaluate(() => addPin("acme/manual", 1));
   await page.waitForFunction(() => Work.ref("acme/manual#1"));
   await selectRepo("acme/manual");
-  await page.getByRole("button", { name: "CI board", exact: true }).click();
+  await page.getByRole("button", { name: "Board", exact: true }).click();
   assert.deepEqual(await rowKeys(), ["acme/manual#1"]);
-  await page.getByRole("button", { name: "Open in PR inbox", exact: true }).click();
+  await page.getByRole("button", { name: "Open in Inbox", exact: true }).click();
   await page.locator("#board .sync-note").filter({ hasText: "Add this repository in Settings" }).waitFor();
   assert.match(await page.locator("#board").innerText(), /Add this repository in Settings/);
   assert.equal(await page.evaluate(() => WorkUI.complete()), false);
@@ -156,7 +156,7 @@ try {
   assert.equal(await page.evaluate(() => state.cursor), null);
 
   await selectRepo("acme/widgets");
-  await page.getByRole("button", { name: "CI board", exact: true }).click();
+  await page.getByRole("button", { name: "Board", exact: true }).click();
   await page.evaluate(() => { state.toasts = []; render(); });
   await page.waitForFunction(() => !renderQueued && !renderSkipped);
   if (process.env.PINGBOARD_SCREENSHOTS) {
@@ -164,12 +164,12 @@ try {
     await page.screenshot({ path: path.join(process.env.PINGBOARD_SCREENSHOTS, "board-handoff.png") });
   }
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "Open in PR inbox", exact: true }).waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "Open in Inbox", exact: true }).waitFor({ state: "visible" });
   if (process.env.PINGBOARD_SCREENSHOTS) {
     await page.screenshot({ path: path.join(process.env.PINGBOARD_SCREENSHOTS, "board-mobile.png") });
   }
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
-  await page.getByRole("button", { name: "Open in PR inbox", exact: true }).click();
+  await page.getByRole("button", { name: "Open in Inbox", exact: true }).click();
   await page.waitForFunction(() => state.page === "inbox" && state.cursor === "acme/widgets#2");
   assert.deepEqual(errors, [], "no browser exceptions");
   console.log("Storage failure, manually pinned repositories, missing repositories, and board layout passed.");
