@@ -22,6 +22,8 @@ Choose **Repositories to discover** in Settings. The inbox automatically loads e
 
 Select a PR to see its description, linked issues, change size, checks, and personal activity history. **Take on** (`t`), **Waiting** (`w`), and **Later** (`s`) save personal decisions. Waiting and Later work with empty notes and offer default reminders you can adjust. **Purgatory** saves an indefinite local decision with Undo. **Route** (`d`) requests a reviewer on GitHub, **Respond** (`n`) posts a comment and waits for a reply, and **Close PR** (`x`) posts a reason and closes the PR. Public actions have an explicit submit dialog. Failed actions keep the dialog and do not mark the PR handled; retrying a partially completed close does not post its reason twice.
 
+Inbox rows identify pull requests that directly request your review. The **+ Pin PRs** picker has a matching **Review requested** tab and marks those results explicitly.
+
 Use `j` / `k` to move, `1`–`7` to switch queues, and `/` to search. Successful decisions advance to the next PR. Local decisions offer Undo, including removal of their progress credit and any pin introduced by triage. Existing pins and subsequent changes are preserved. Background changes keep the current selection stable until you navigate or act.
 
 The repository selector applies to the inbox, CI board, timeline, and progress, and survives reloads. **All repositories** combines them. Pinned repositories are selectable even without full discovery; add them in Settings to discover their entire backlog. **View on CI board** and **Open in PR inbox** open the same PR across views, clearing filters that would hide it.
@@ -64,7 +66,7 @@ Each row shows both personal triage and CI status and, where there is an obvious
 | **Ready to merge** | green and approved | Merge… |
 | **Merge conflicts** | the author has to resolve them | — |
 
-A blue dot marks a PR that changed since you last selected it. In My groups, drag rows to reorder them or move them between groups. Drag the divider to resize the list.
+A blue dot marks a PR that changed since you last selected it, including new comments and reviews by someone else or a new direct review request. Your own comments and reviews do not light it. In My groups, drag rows to reorder them or move them between groups. Drag the divider to resize the list.
 
 Selecting a row opens the detail pane: the status with a one-line explanation, the failing and running jobs (each links to its Buildkite job), branch freshness, reviews, labels, and the latest comments — which is where the CI bot answers `/ci` commands.
 
@@ -103,7 +105,7 @@ Repository discovery runs every two minutes while visible, every ten minutes in 
 
 An incomplete scan retains saved data and shows its count and retry status; the inbox never claims you are caught up. After repeated connection failures it tries again after a short pause, or when the browser reconnects. GitHub rate-limit cooldowns are respected across retries and reloads. Refresh retries immediately when GitHub permits it. Only discovery reads are automatically retried; GitHub mutations are not.
 
-Pinned and selected PRs load full CI detail, refreshing every 60 seconds by default (configurable). Pinned PRs refresh five times slower in background tabs. The base-branch baseline covers the last 30 commits and is re-read every 10 minutes. Remaining API quota is shown in the top bar, and polling pauses if it runs low. Discovery and reminders run while Pingboard is open; there is no background server.
+Pinned and selected PRs load full CI detail, refreshing every 60 seconds by default (configurable). Refreshes read up to ten PRs per GraphQL request, while contexts beyond the first 100 are still paged individually. Pinned PRs refresh five times slower in background tabs. The base-branch baseline covers the last 30 commits and is re-read every 10 minutes. Remaining API quota is shown in the top bar, and polling pauses if it runs low. Discovery and reminders run while Pingboard is open; there is no background server.
 
 ## Code layout
 

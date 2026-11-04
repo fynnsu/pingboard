@@ -120,7 +120,7 @@ class WorkspaceStore {
         if (!record || typeof record.id !== "string" || !record.id || record.id.length > 500) throw new Error("Invalid workspace record.");
         // Whitelists keep tokens and unexpected backup properties out of storage/exports.
         const fields = {
-          items: ["id", "kind", "key", "repo", "number", "title", "url", "state", "isDraft", "author", "createdAt", "updatedAt", "closedAt", "mergedAt", "mergedBy", "headOid", "rollup", "reviewDecision", "labels", "comments", "reviews", "additions", "deletions", "files", "body", "linkedIssues", "firstSeenAt", "origin"],
+          items: ["id", "kind", "key", "repo", "number", "title", "url", "state", "isDraft", "author", "createdAt", "updatedAt", "closedAt", "mergedAt", "mergedBy", "headOid", "rollup", "reviewDecision", "reviewRequested", "labels", "comments", "reviews", "additions", "deletions", "files", "body", "linkedIssues", "firstSeenAt", "origin"],
           decisions: ["id", "revision", "status", "triagedAt", "updatedAt", "dueAt", "waitingFor", "note", "reason"],
           events: ["id", "itemId", "repo", "number", "kind", "actor", "at", "observedAt", "source", "state", "message", "reverted"],
           meta: ["id", "repo", "startedAt", "lastSync", "complete", "updatedAt", "scan", "retryAt"],

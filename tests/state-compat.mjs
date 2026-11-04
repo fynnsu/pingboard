@@ -32,21 +32,30 @@ function mockGitHub(request, login) {
   if (url.pathname !== "/graphql") return [];
   const { query, variables = {} } = JSON.parse(request.postData() || "{}");
   if (query.includes("pullRequest(number:")) {
-    const oid = "a".repeat(40);
-    const now = new Date().toISOString();
-    return { data: { repository: {
-      ref: { compare: { aheadBy: 1, behindBy: 0 } },
-      pullRequest: {
-        id: `PR_${variables.number}`, number: variables.number, title: `Test pull request ${variables.number}`,
-        url: `https://github.com/${variables.owner}/${variables.name}/pull/${variables.number}`,
-        state: "OPEN", isDraft: false, updatedAt: now, author: { login: "someone" }, authorAssociation: "MEMBER",
-        baseRefName: "main", headRefOid: oid, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: null,
-        viewerCanUpdateBranch: true, viewerCanEnableAutoMerge: true, autoMergeRequest: null,
-        additions: 1, deletions: 1, changedFiles: 1,
-        labels: { nodes: [] }, latestOpinionatedReviews: { nodes: [] }, comments: { nodes: [] },
-        commits: { nodes: [{ commit: { oid, committedDate: now, statusCheckRollup: null } }] }
-      }
-    } } };
+    const aliases = [...query.matchAll(/\bpr(\d+):\s*repository/g)].map((match) => Number(match[1]));
+    const make = (owner, name, number) => {
+      const oid = "a".repeat(40);
+      const now = new Date().toISOString();
+      return {
+        ref: { compare: { aheadBy: 1, behindBy: 0 } },
+        pullRequest: {
+          id: `PR_${number}`, number, title: `Test pull request ${number}`,
+          url: `https://github.com/${owner}/${name}/pull/${number}`,
+          state: "OPEN", isDraft: false, updatedAt: now, author: { login: "someone" }, authorAssociation: "MEMBER",
+          baseRefName: "main", headRefOid: oid, mergeable: "MERGEABLE", mergeStateStatus: "CLEAN", reviewDecision: null,
+          viewerCanUpdateBranch: true, viewerCanEnableAutoMerge: true, autoMergeRequest: null,
+          additions: 1, deletions: 1, changedFiles: 1,
+          labels: { nodes: [] }, latestOpinionatedReviews: { nodes: [] }, reviewRequests: { nodes: [] }, reviews: { nodes: [] }, comments: { nodes: [] },
+          commits: { nodes: [{ commit: { oid, committedDate: now, statusCheckRollup: null } }] }
+        }
+      };
+    };
+    if (aliases.length) {
+      const data = {};
+      for (const index of aliases) data[`pr${index}`] = make(variables[`owner${index}`], variables[`name${index}`], variables[`number${index}`]);
+      return { data };
+    }
+    return { data: { repository: make(variables.owner, variables.name, variables.number) } };
   }
   if (query.includes("history(first:")) return { data: { repository: { ref: { target: { history: { nodes: [] } } } } } };
   if (query.includes("search(")) return { data: { search: { issueCount: 0, nodes: [] } } };

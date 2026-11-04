@@ -18,7 +18,7 @@ export function createFixture(total = 57) {
     additions: number * 12, deletions: number * 3, changedFiles: number % 8 + 1,
     bodyText: "This change fixes a problem reported by a contributor.\n\nThe previous implementation could leave requests waiting indefinitely. The new behavior handles the empty queue and includes regression coverage.\n\nTesting: existing suite and a focused reproduction both pass.",
     labels: { nodes: [{ name: number % 2 ? "bug" : "enhancement", color: number % 2 ? "d73a4a" : "a2eeef" }] },
-    latestOpinionatedReviews: { nodes: [] }, reviews: { nodes: [] }, comments: { nodes: [] },
+    latestOpinionatedReviews: { nodes: [] }, reviewRequests: { nodes: [] }, reviews: { nodes: [] }, comments: { nodes: [] },
     closingIssuesReferences: { nodes: number === 1 ? [{ number: 88, title: "Requests hang on an empty queue", url: `https://github.com/${repo}/issues/88` }] : [] },
     commits: { nodes: [{ commit: { oid: "a".repeat(40), committedDate: new Date(now - 60000).toISOString(), statusCheckRollup: null } }] },
     ...extra
@@ -40,6 +40,7 @@ export function createFixture(total = 57) {
       const { query, variables = {} } = body;
       const repo = `${variables.owner}/${variables.name}`;
       const repositoryItems = fixture.repositories.get(repo);
+      const aliases = [...query.matchAll(/\bpr(\d+):\s*repository/g)].map((match) => Number(match[1]));
       if (variables.owner && !repositoryItems) return { json: { errors: [{ message: `Mock repository ${repo} is not configured.` }] } };
       if (query.includes("PingboardTimelineClosed")) {
         const items = repositoryItems.filter((item) => item.state !== "OPEN").sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
@@ -63,6 +64,15 @@ export function createFixture(total = 57) {
         return { json: { data: { repository: { pullRequests: { totalCount: items.length, nodes, pageInfo: { hasNextPage: offset + size < items.length, endCursor: String(offset + size) } } } } } };
       }
       if (query.includes("PingboardReconcile")) return { json: { data: { nodes: variables.ids.map((id) => [...fixture.repositories.values()].flat().find((item) => item.id === id) || null) } } };
+      if (aliases.length) {
+        const data = {};
+        for (const index of aliases) {
+          const aliasRepo = `${variables[`owner${index}`]}/${variables[`name${index}`]}`;
+          const items = fixture.repositories.get(aliasRepo) || [];
+          data[`pr${index}`] = { ref: { compare: { aheadBy: 1, behindBy: 0 } }, pullRequest: items.find((item) => item.number === variables[`number${index}`]) || null };
+        }
+        return { json: { data } };
+      }
       if (query.includes("pullRequest(number:")) return { json: { data: { repository: { ref: { compare: { aheadBy: 1, behindBy: 0 } }, pullRequest: repositoryItems.find((item) => item.number === variables.number) } } } };
       if (query.includes("history(first:")) return { json: { data: { repository: { ref: { target: { history: { nodes: [] } } } } } } };
       if (query.includes("search(")) {

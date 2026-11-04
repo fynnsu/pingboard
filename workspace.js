@@ -245,7 +245,7 @@ const Work = {
     const item = { id: pr.id, kind: "pr", key: pr.key, repo: pr.repo, number: pr.number, title: pr.title, url: pr.url,
       state: pr.state, isDraft: pr.isDraft, author: pr.author, createdAt: pr.createdAt, updatedAt: pr.updatedAt,
       closedAt: pr.closedAt, mergedAt: pr.mergedAt, mergedBy: pr.mergedBy, headOid: pr.headOid,
-      rollup: pr.rollup, reviewDecision: pr.reviewDecision, labels: pr.labels, comments: pr.comments,
+      rollup: pr.rollup, reviewDecision: pr.reviewDecision, reviewRequested: pr.reviewRequested, labels: pr.labels, comments: pr.comments,
       reviews: pr.activityReviews || [], additions: pr.additions, deletions: pr.deletions, files: pr.files,
       body: pr.body, linkedIssues: pr.linkedIssues || [] };
     await this.observe([item], this.meta.get(`repo:${pr.repo}`));

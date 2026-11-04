@@ -27,6 +27,7 @@ const Workflow = (() => {
     if (after.state !== "OPEN" || !["waiting", "later"].includes(decision.status)) return null;
     const since = time(decision.updatedAt);
     const waitingFor = decision.waitingFor || "author";
+    if (!before.reviewRequested && after.reviewRequested) return "Review requested";
     const comments = after.comments || [];
     if (comments.some((comment) => time(comment.at) > since && !comment.bot && !sameLogin(comment.login, login)
       && (waitingFor !== "author" || sameLogin(comment.login, after.author)))) return "New reply";

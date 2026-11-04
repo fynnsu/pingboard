@@ -6,7 +6,9 @@ import { createFixture, installRoutes, seed, ORIGIN } from "./support/fixture.mj
 const root = path.resolve(process.argv[process.argv.indexOf("--head") + 1] || "..");
 const browser = await chromium.launch(process.env.PINGBOARD_BROWSER_CHANNEL ? { channel: process.env.PINGBOARD_BROWSER_CHANNEL } : {});
 const context = await browser.newContext();
-await installRoutes(context, root, createFixture(3));
+const fixture = createFixture(3);
+fixture.items[0].reviewRequests = { nodes: [{ requestedReviewer: { isViewer: true } }] };
+await installRoutes(context, root, fixture);
 const page = await context.newPage();
 const errors = [];
 page.on("pageerror", (error) => errors.push(error.message));
@@ -15,6 +17,7 @@ try {
   await seed(page);
   await page.goto(ORIGIN);
   await page.waitForFunction(() => Work.ready && Work.meta.get("repo:acme/widgets")?.complete && !Work.syncer.running.size);
+  assert.equal(await page.locator(".inbox-row").filter({ hasText: "Review requested" }).count(), 1, "inbox shows direct review requests");
   await page.evaluate(async () => {
     state.prefs.boardGrouping = "manual";
     await Work.decide(Work.ref("acme/widgets#1"), { status: "needs_me" }, { track: true, advance: false });
@@ -63,6 +66,49 @@ try {
   await select.selectOption("all");
   await rendered();
   assert.equal(await page.locator("#board .row").count(), 3);
+  const refreshBefore = await page.evaluate(() => state.status.get("acme/widgets#1")?.at || 0);
+  await page.evaluate(() => refreshAll());
+  await page.waitForFunction((before) => (state.status.get("acme/widgets#1")?.at || 0) > before, refreshBefore);
+  assert.ok(fixture.calls.some(({ pathname, body }) => pathname === "/graphql" && body.query.includes("pr0: repository") && body.query.includes("pr1: repository")), "pinned refreshes are batched");
+
+  await page.evaluate(() => {
+    const board = document.querySelector("#board");
+    board.style.height = "120px";
+    board.scrollTop = 50;
+    render();
+  });
+  await rendered();
+  assert.equal(await page.evaluate(() => document.querySelector("#board").scrollTop), 50, "board scroll position survives rerender");
+  await page.locator('#board .row[data-key="acme/widgets#1"]').click();
+  await rendered();
+  await page.evaluate(() => {
+    const detail = document.querySelector("#detail");
+    detail.style.height = "120px";
+    detail.scrollTop = 40;
+    render();
+  });
+  await rendered();
+  assert.equal(await page.evaluate(() => document.querySelector("#detail").scrollTop), 40, "detail scroll position survives rerender");
+
+  const firstRow = page.locator('#board .row[data-key="acme/widgets#1"]');
+  await firstRow.click();
+  await rendered();
+  const otherActivityAt = new Date(Date.now() + 1000).toISOString();
+  fixture.items[0].comments.nodes.push({ id: "COMMENT_OTHER", author: { login: "alex", __typename: "User" }, createdAt: otherActivityAt, bodyText: "Please take a look", url: fixture.items[0].url });
+  await page.evaluate(() => refreshAll());
+  await page.waitForFunction((at) => state.data.get("acme/widgets#1")?.activityAt === at, otherActivityAt);
+  await rendered();
+  assert.equal(await firstRow.locator(".new-dot").count(), 1, "new activity lights the change dot");
+  await firstRow.click();
+  await rendered();
+  assert.equal(await firstRow.locator(".new-dot").count(), 0, "selecting the PR acknowledges activity");
+
+  const ownActivityAt = new Date(Date.now() + 2000).toISOString();
+  fixture.items[0].comments.nodes.push({ id: "COMMENT_SELF", author: { login: fixture.login, __typename: "User" }, createdAt: ownActivityAt, bodyText: "My own follow-up", url: fixture.items[0].url });
+  await page.evaluate(() => refreshAll());
+  await page.waitForFunction(() => state.status.get("acme/widgets#1")?.loading === false);
+  await rendered();
+  assert.equal(await firstRow.locator(".new-dot").count(), 0, "the user's own activity does not light the change dot");
 
   // The same native event path is used by the repository selector.
   await page.getByRole("combobox", { name: "Repository", exact: true }).evaluate((node) => {
@@ -74,5 +120,5 @@ try {
   assert.equal(await page.evaluate(() => pointerHeld || renderSkipped), false);
   assert.equal(await page.getByRole("combobox", { name: "Repository", exact: true }).inputValue(), "");
   assert.deepEqual(errors, []);
-  console.log("Native dropdown selection, refresh stability, cancellation, and triage filtering passed.");
+  console.log("Review requests, batched refreshes, activity dots, dropdown stability, and triage filtering passed.");
 } finally { await browser.close(); }

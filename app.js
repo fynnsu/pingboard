@@ -24,6 +24,7 @@ const API_VERSION = "2022-11-28";
 
 const DEFAULT_REPO = "vllm-project/vllm";
 const REFRESH_CONCURRENCY = 4;
+const REFRESH_BATCH = 10;           // PRs read per GraphQL request
 const TICK_MS = 15 * 1000;
 const CLOSED_TTL_S = 15 * 60;       // merged/closed PRs barely change
 const HIDDEN_SLOWDOWN = 5;          // background tabs poll this much slower
@@ -183,7 +184,7 @@ const state = {
   authLoading: false,
   authError: "",
 
-  board: { groups: [], pins: [] },   // pins: [{key, repo, number, group, addedAt, seen}]
+  board: { groups: [], pins: [] },   // pins: [{key, repo, number, group, addedAt, seen, seenActivity}]
   prefs: { interval: 60, notify: false, defaultRepo: DEFAULT_REPO, boardWidth: BOARD_WIDTH, following: [], repoProfiles: {} },
 
   data: new Map(),        // pin key -> PR model
@@ -259,7 +260,8 @@ function cleanBoard(raw) {
       number: pin.number,
       group: groups.some((group) => group.id === pin.group) ? pin.group : groups[0].id,
       addedAt: Number(pin.addedAt) || Date.now(),
-      ...(typeof pin.seen === "string" ? { seen: pin.seen } : {})
+      ...(typeof pin.seen === "string" ? { seen: pin.seen } : {}),
+      ...(typeof pin.seenActivity === "string" ? { seenActivity: pin.seenActivity } : {})
     });
   }
   return { groups, pins };
@@ -427,7 +429,7 @@ async function rest(method, path, body) {
   return json;
 }
 
-async function gql(query, variables = {}, { strict = false, signal } = {}) {
+async function gql(query, variables = {}, { strict = false, partial = false, signal } = {}) {
   const token = state.token;
   let response;
   try {
@@ -468,7 +470,7 @@ async function gql(query, variables = {}, { strict = false, signal } = {}) {
         || /resource limit|timed? ?out|timeout|something went wrong|couldn.t respond.*time/i.test(message)
         || (response.ok && !json?.data && !json?.errors?.length) });
   }
-  return json.data;
+  return partial ? { data: json.data, errors: json.errors || [] } : json.data;
 }
 
 const CONTEXT_FIELDS = `
@@ -476,37 +478,54 @@ const CONTEXT_FIELDS = `
   ... on StatusContext { context state description targetUrl createdAt }
   ... on CheckRun { name status conclusion detailsUrl startedAt checkSuite { app { slug } } }`;
 
+const PR_FIELDS = `
+fragment PullRequestFields on PullRequest {
+  id number title url state isDraft updatedAt createdAt closedAt mergedAt bodyText
+  mergedBy { login }
+  author { login } authorAssociation
+  baseRefName headRefOid
+  mergeable mergeStateStatus reviewDecision
+  reviewRequests(first: 100) { nodes { requestedReviewer { ... on User { isViewer } } } }
+  viewerCanUpdateBranch
+  autoMergeRequest { enabledAt }
+  additions deletions changedFiles
+  labels(first: 40) { nodes { name color } }
+  latestOpinionatedReviews(first: 20) { nodes { state author { login } } }
+  reviews(last: 5) { nodes { id state submittedAt author { login } } }
+  closingIssuesReferences(first: 10) { nodes { number title url } }
+  comments(last: 5) { nodes { id author { login __typename } bodyText createdAt url } }
+  commits(last: 1) { nodes { commit {
+    oid committedDate
+    statusCheckRollup { state contexts(first: 100) {
+      totalCount
+      statusContextCountsByState { state count }
+      checkRunCountsByState { state count }
+      pageInfo { hasNextPage endCursor }
+      nodes { ${CONTEXT_FIELDS} }
+    } }
+  } } }
+}`;
+
 const PR_QUERY = `
 query($owner: String!, $name: String!, $number: Int!, $baseRef: String!, $headRef: String!) {
   repository(owner: $owner, name: $name) {
     ref(qualifiedName: $baseRef) { compare(headRef: $headRef) { aheadBy behindBy } }
-    pullRequest(number: $number) {
-      id number title url state isDraft updatedAt createdAt closedAt mergedAt bodyText
-      mergedBy { login }
-      author { login } authorAssociation
-      baseRefName headRefOid
-      mergeable mergeStateStatus reviewDecision
-      viewerCanUpdateBranch
-      autoMergeRequest { enabledAt }
-      additions deletions changedFiles
-      labels(first: 40) { nodes { name color } }
-      latestOpinionatedReviews(first: 20) { nodes { state author { login } } }
-      reviews(last: 5) { nodes { id state submittedAt author { login } } }
-      closingIssuesReferences(first: 10) { nodes { number title url } }
-      comments(last: 5) { nodes { id author { login __typename } bodyText createdAt url } }
-      commits(last: 1) { nodes { commit {
-        oid committedDate
-        statusCheckRollup { state contexts(first: 100) {
-          totalCount
-          statusContextCountsByState { state count }
-          checkRunCountsByState { state count }
-          pageInfo { hasNextPage endCursor }
-          nodes { ${CONTEXT_FIELDS} }
-        } }
-      } } }
-    }
+    pullRequest(number: $number) { ...PullRequestFields }
   }
-}`;
+}
+${PR_FIELDS}`;
+
+/* Read several pinned PRs in one GraphQL request, each under its own alias. */
+function prsQuery(count) {
+  const indexes = [...Array(count).keys()];
+  const params = indexes.map((i) => `$owner${i}: String!, $name${i}: String!, $number${i}: Int!, $baseRef${i}: String!, $headRef${i}: String!`);
+  const fields = indexes.map((i) => `
+  pr${i}: repository(owner: $owner${i}, name: $name${i}) {
+    ref(qualifiedName: $baseRef${i}) { compare(headRef: $headRef${i}) { aheadBy behindBy } }
+    pullRequest(number: $number${i}) { ...PullRequestFields }
+  }`);
+  return `query(${params.join(", ")}) {${fields.join("")}\n}\n${PR_FIELDS}`;
+}
 
 const CONTEXTS_QUERY = `
 query($owner: String!, $name: String!, $oid: GitObjectID!, $cursor: String) {
@@ -535,6 +554,7 @@ query($query: String!) {
       number title isDraft updatedAt url
       author { login }
       reviewDecision
+      reviewRequests(first: 100) { nodes { requestedReviewer { ... on User { isViewer } } } }
       repository { nameWithOwner }
       labels(first: 8) { nodes { name color } }
       commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
@@ -646,21 +666,59 @@ function summarizeCi(checks, profile) {
   return ci;
 }
 
-async function fetchPR(pin, { force = false } = {}) {
+/* Each pin's repository (with its pullRequest), or the Error that kept it out.
+   Partial GraphQL errors are mapped back to the alias that caused them. */
+async function loadPRs(pins, bases) {
+  const variables = {};
+  pins.forEach((pin, i) => {
+    const [owner, name] = pin.repo.split("/");
+    Object.assign(variables, {
+      [`owner${i}`]: owner,
+      [`name${i}`]: name,
+      [`number${i}`]: pin.number,
+      [`baseRef${i}`]: `refs/heads/${bases[i]}`,
+      [`headRef${i}`]: `refs/pull/${pin.number}/head`
+    });
+  });
+  try {
+    const { data, errors } = await gql(prsQuery(pins.length), variables, { partial: true });
+    return pins.map((_, i) => {
+      if (data?.[`pr${i}`]?.pullRequest) return data[`pr${i}`];
+      const error = errors.find((entry) => entry.path?.[0] === `pr${i}` && entry.path[1] !== "ref");
+      return new Error(error?.message || "Pull request not found (or the token cannot see it)");
+    });
+  } catch (error) {
+    return pins.map(() => error);
+  }
+}
+
+/* Read [{ pin, options }] in one request, retrying only the entries whose base
+   branch was different from the cached guess. */
+async function fetchPRs(entries) {
+  const pins = entries.map((entry) => entry.pin);
+  const bases = pins.map((pin) => state.data.get(pin.key)?.base || "main");
+  const repos = await loadPRs(pins, bases);
+  const moved = repos.flatMap((repo, i) => (!(repo instanceof Error) && repo.pullRequest?.baseRefName !== bases[i] ? [i] : []));
+  if (moved.length) {
+    for (const i of moved) bases[i] = repos[i].pullRequest.baseRefName;
+    const again = await loadPRs(moved.map((i) => pins[i]), moved.map((i) => bases[i]));
+    moved.forEach((i, j) => (repos[i] = again[j]));
+  }
+  return Promise.all(entries.map(({ pin, options }, i) => (
+    repos[i] instanceof Error ? repos[i] : toPR(pin, repos[i], bases[i], options).catch((error) => error)
+  )));
+}
+
+async function fetchPR(pin, options = {}) {
+  const [pr] = await fetchPRs([{ pin, options }]);
+  if (pr instanceof Error) throw pr;
+  return pr;
+}
+
+async function toPR(pin, repo, base, { force = false } = {}) {
   const prev = state.data.get(pin.key);
   const [owner, name] = pin.repo.split("/");
-  const headRef = `refs/pull/${pin.number}/head`;
-  const load = async (base) => (await gql(PR_QUERY, { owner, name, number: pin.number, baseRef: `refs/heads/${base}`, headRef })).repository;
-
-  let base = prev?.base || "main";
-  let repo = await load(base);
-  if (repo?.pullRequest && repo.pullRequest.baseRefName !== base) {
-    base = repo.pullRequest.baseRefName;
-    repo = await load(base);
-  }
-  const pr = repo?.pullRequest;
-  if (!pr) throw new Error("Pull request not found (or the token cannot see it)");
-
+  const pr = repo.pullRequest;
   const commit = pr.commits.nodes[0]?.commit;
   const contexts = commit?.statusCheckRollup?.contexts;
   // Statuses do not bump the PR's updatedAt, so fingerprint the per-state counts:
@@ -712,9 +770,11 @@ async function fetchPR(pin, { force = false } = {}) {
     deletions: pr.deletions,
     files: pr.changedFiles,
     labels: pr.labels.nodes,
-    reviews: pr.latestOpinionatedReviews.nodes.map((review) => ({ login: review.author?.login || "ghost", state: review.state })),
+    reviews: (pr.latestOpinionatedReviews?.nodes || []).map((review) => ({ login: review.author?.login || "ghost", state: review.state })),
     activityReviews: (pr.reviews?.nodes || []).map((review) => ({ id: review.id, state: review.state, login: review.author?.login, at: review.submittedAt })),
-    comments: pr.comments.nodes.map((comment) => ({ id: comment.id, bot: comment.author?.__typename === "Bot", login: comment.author?.login || "ghost", text: comment.bodyText.slice(0, 700), at: comment.createdAt, url: safeUrl(comment.url) })),
+    reviewRequested: pr.state === "OPEN" && (pr.reviewRequests?.nodes || []).some((request) => request.requestedReviewer?.isViewer),
+    comments: (pr.comments?.nodes || []).map((comment) => ({ id: comment.id, bot: comment.author?.__typename === "Bot", login: comment.author?.login || "ghost", text: (comment.bodyText || "").slice(0, 700), at: comment.createdAt, url: safeUrl(comment.url) })),
+    activityAt: newestActivity(pr),
     behind: repo.ref?.compare?.behindBy ?? null,
     checks,
     fingerprint,
@@ -722,14 +782,27 @@ async function fetchPR(pin, { force = false } = {}) {
   };
 }
 
-/* What the user has "seen" for a PR; a different signature lights the change dot. */
+/* The newest comment or review by anyone except the signed-in user. */
+function newestActivity(pr) {
+  const login = state.user?.login?.toLowerCase();
+  const activity = (pr.comments?.nodes || []).map((comment) => [comment.author?.login, comment.createdAt])
+    .concat((pr.reviews?.nodes || []).map((review) => [review.author?.login, review.submittedAt]));
+  return activity.reduce((newest, [author, at]) => {
+    if (!at || author?.toLowerCase() === login) return newest;
+    return at > newest ? at : newest;
+  }, "");
+}
+
+/* What the user has "seen" for a PR; a different signature or new activity lights the change dot. */
 function signature(pr) {
-  return [pr.state, pr.headOid, pr.ci.state, pr.ci.fail, pr.reviewDecision].join("|");
+  const parts = [pr.state, pr.headOid, pr.ci.state, pr.ci.fail, pr.reviewDecision];
+  return (pr.reviewRequested ? [...parts, "review-requested"] : parts).join("|");
 }
 
 function hasChanged(pin) {
   const pr = state.data.get(pin.key);
-  return Boolean(pr && pin.seen && pin.seen !== signature(pr));
+  return Boolean(pr && ((pin.seen && pin.seen !== signature(pr))
+    || (pin.seenActivity !== undefined && pr.activityAt > pin.seenActivity)));
 }
 
 /* Failing-job evidence, without reading logs:
@@ -836,49 +909,64 @@ function queueRefresh(pin, options = {}) {
   }
   refreshQueued.add(pin.key);
   refreshQueue.push({ pin, options });
-  pumpRefresh();
+  // Let all pins queued by one tick share a batched GraphQL request.
+  queueMicrotask(pumpRefresh);
 }
 
 function pumpRefresh() {
   while (refreshActive < REFRESH_CONCURRENCY && refreshQueue.length) {
-    const { pin, options } = refreshQueue.shift();
+    const batch = refreshQueue.splice(0, REFRESH_BATCH);
     refreshActive += 1;
-    refreshPin(pin, options).finally(() => {
+    refreshPins(batch).finally(() => {
       refreshActive -= 1;
-      refreshQueued.delete(pin.key);
-      if (refreshAgain.delete(pin.key) && trackedRef(pin.key)) queueRefresh(pin, { force: true });
+      for (const { pin } of batch) {
+        refreshQueued.delete(pin.key);
+        if (refreshAgain.delete(pin.key) && trackedRef(pin.key)) queueRefresh(pin, { force: true });
+      }
       pumpRefresh();
     });
   }
 }
 
-async function refreshPin(pin, options = {}) {
+async function refreshPins(batch) {
   const generation = Work.generation;
-  state.status.set(pin.key, { ...state.status.get(pin.key), loading: true });
+  for (const { pin } of batch) state.status.set(pin.key, { ...state.status.get(pin.key), loading: true });
   render();
   try {
-    const prev = state.data.get(pin.key);
-    const pr = await fetchPR(pin, options);
-    if (generation !== Work.generation || !trackedRef(pin.key)) return;
-    state.data.set(pin.key, pr);
-    await Work.observeDetail(pr).catch((error) => { if (generation === Work.generation) Work.fail(error); });
-    if (generation !== Work.generation) return;
-    // GitHub computes mergeability lazily; ask again shortly instead of showing a guess for a full interval.
-    const unknownTries = pr.state === "OPEN" && pr.mergeable === "UNKNOWN" ? (state.status.get(pin.key)?.unknownTries || 0) + 1 : 0;
-    state.status.set(pin.key, { at: Date.now(), loading: false, error: "", unknownTries });
-    if (unknownTries && unknownTries <= 2) setTimeout(() => generation === Work.generation && trackedRef(pin.key) && queueRefresh(pin), 4000);
-    state.lastSync = Date.now();
-    if (pinByKey(pin.key) && !pin.seen) {
-      pin.seen = signature(pr);
-      persistBoard();
-    }
-    if (prev && prev.headOid === pr.headOid && prev.ci.state === "running" && pr.ci.state !== "running") announceCi(pr);
+    const results = await fetchPRs(batch);
+    await Promise.all(batch.map(({ pin }, index) => settleRefresh(pin, results[index], generation)));
     refreshBaselines();
   } catch (error) {
-    if (generation !== Work.generation) return;
-    state.status.set(pin.key, { at: Date.now(), loading: false, error: error.message });
+    if (generation === Work.generation) {
+      for (const { pin } of batch) state.status.set(pin.key, { at: Date.now(), loading: false, error: error.message });
+    }
   }
   render();
+}
+
+async function settleRefresh(pin, pr, generation) {
+  if (pr instanceof Error) {
+    state.status.set(pin.key, { at: Date.now(), loading: false, error: pr.message });
+    return;
+  }
+  if (generation !== Work.generation || !trackedRef(pin.key)) return;
+  const prev = state.data.get(pin.key);
+  state.data.set(pin.key, pr);
+  await Work.observeDetail(pr).catch((error) => { if (generation === Work.generation) Work.fail(error); });
+  if (generation !== Work.generation) return;
+  // GitHub computes mergeability lazily; ask again shortly instead of showing a guess for a full interval.
+  const unknownTries = pr.state === "OPEN" && pr.mergeable === "UNKNOWN" ? (state.status.get(pin.key)?.unknownTries || 0) + 1 : 0;
+  state.status.set(pin.key, { at: Date.now(), loading: false, error: "", unknownTries });
+  if (unknownTries && unknownTries <= 2) setTimeout(() => generation === Work.generation && trackedRef(pin.key) && queueRefresh(pin), 4000);
+  state.lastSync = Date.now();
+  // Older pins have no activity watermark; initialize it to the current value so
+  // upgrading does not light every existing pin at once.
+  if (pinByKey(pin.key) && (pin.seen === undefined || pin.seenActivity === undefined)) {
+    pin.seen ??= signature(pr);
+    pin.seenActivity ??= pr.activityAt;
+    persistBoard();
+  }
+  if (prev && prev.headOid === pr.headOid && prev.ci.state === "running" && pr.ci.state !== "running") announceCi(pr);
 }
 
 function announceCi(pr) {
@@ -1182,8 +1270,9 @@ function visiblePins() {
 function acknowledge(key) {
   const pin = pinByKey(key);
   const pr = state.data.get(key);
-  if (!pin || !pr || pin.seen === signature(pr)) return;
+  if (!pin || !pr || (pin.seen === signature(pr) && pin.seenActivity === pr.activityAt)) return;
   pin.seen = signature(pr);
+  pin.seenActivity = pr.activityAt;
   persistBoard();
 }
 
@@ -1683,6 +1772,7 @@ function verdict(pr, index) {
 
 function renderBoard(index) {
   const board = document.querySelector("#board");
+  const boardScrollTop = board.scrollTop;
   if (!state.board.pins.some(isBoardPin)) {
     board.replaceChildren(el("div", { class: "empty" }, [
       el("h2", { text: "No PRs on this CI board yet" }),
@@ -1692,6 +1782,7 @@ function renderBoard(index) {
         el("button", { class: "btn", onclick: () => openAdd(), text: "+ Pin PRs" })
       ])
     ]));
+    board.scrollTop = boardScrollTop;
     return;
   }
   const filtering = Work.boardQueue !== "all" || state.query.trim();
@@ -1761,6 +1852,8 @@ function renderBoard(index) {
   if (!sections.length) sections.push(el("div", { class: "empty" }, [el("p", { text: "No pinned pull requests match this filter." })]));
   else if (!filtering && state.prefs.boardGrouping === "manual") sections.push(el("button", { class: "link-btn new-group", onclick: newGroup, text: "+ New group" }));
   groups.replaceChildren(...(Work.error ? [WorkUI.syncStatus()] : []), ...sections);
+  // WebKit can reset a scroll container when descendants are replaced.
+  board.scrollTop = boardScrollTop;
 }
 
 function groupSummary(pins, index) {
@@ -1844,6 +1937,7 @@ function row(pin, index) {
         el("a", { class: "num", href: pr.url, target: "_blank", rel: "noopener", title: "Open on GitHub", onclick: (event) => event.stopPropagation(), text: shortRef(pr.repo, pr.number) }),
         authorName(pr.author),
         queue ? el("span", { class: `queue-label q-${queue}`, text: Workflow.queues[queue] }) : null,
+        pr.reviewRequested ? el("span", { class: "t-warn", text: "review requested" }) : null,
         el("span", { title: new Date(pr.updatedAt).toLocaleString(), text: `updated ${ago(pr.updatedAt)} ago` }),
         review ? el("span", { class: pr.reviewDecision === "APPROVED" ? "t-good" : "t-bad", text: review }) : null,
         ...pr.labels.filter((label) => quick.includes(label.name)).map(labelChip),
@@ -1937,14 +2031,23 @@ function renderDetail(index) {
   const previousTimelineScrollTop = previousTimeline?.querySelector(".detail-timeline-scroll")?.scrollTop;
   const pin = cursorPin();
   const pr = cursorPR();
-  if (!pin) return detail.replaceChildren(el("div", { class: "detail-empty", text: "Select a pull request to see its CI, failures and actions." }));
+  const detailScrollTop = detail.dataset.key === pin?.key ? detail.scrollTop : 0;
+  if (!pin) {
+    detail.replaceChildren(el("div", { class: "detail-empty", text: "Select a pull request to see its CI, failures and actions." }));
+    detail.scrollTop = 0;
+    delete detail.dataset.key;
+    return;
+  }
   if (!pr) {
     const status = state.status.get(pin.key) || {};
-    return detail.replaceChildren(el("div", { class: "detail-empty" }, [
+    detail.replaceChildren(el("div", { class: "detail-empty" }, [
       el("p", { text: `${pin.repo}#${pin.number}` }),
       el("p", { class: status.error ? "t-bad" : "muted", text: status.error || "Loading…" }),
       el("button", { class: "btn", onclick: () => removePin(pin.key), text: "Unpin" })
     ]));
+    detail.scrollTop = detailScrollTop;
+    detail.dataset.key = pin.key;
+    return;
   }
 
   const open = pr.state === "OPEN";
@@ -2028,6 +2131,7 @@ function renderDetail(index) {
     const mine = pr.reviews.find((review) => review.login === state.user.login);
     side.push(panel("Review & merge", [
       el("div", { text: reviewSentence(pr) }),
+      pr.reviewRequested ? el("div", { class: "t-warn", text: "Your review is requested" }) : null,
       el("div", { class: "btn-row" }, [
         mine?.state === "APPROVED" ? el("span", { class: "t-good", text: "✓ You approved" }) : btn("Approve", () => approve(pr)),
         btn(pr.autoMerge ? "Auto-merge is on…" : "Merge…", () => mergeMenu(pr))
@@ -2053,6 +2157,8 @@ function renderDetail(index) {
   blocks.push(detailTimeline(pr));
 
   detail.replaceChildren(...blocks);
+  detail.scrollTop = detailScrollTop;
+  detail.dataset.key = pr.key;
   if (previousTimelineKey === pr.key && Number.isFinite(previousTimelineScrollTop)) {
     detail.querySelector(".detail-timeline-scroll").scrollTop = previousTimelineScrollTop;
   }
@@ -2434,6 +2540,7 @@ function openAdd(groupId = targetGroupId()) {
       return (result?.nodes || []).map((node) => {
         const ref = { repo: node.repository.nameWithOwner, number: node.number };
         const rollup = node.commits.nodes[0]?.commit.statusCheckRollup?.state;
+        const reviewRequested = (node.reviewRequests?.nodes || []).some((request) => request.requestedReviewer?.isViewer);
         const pinned = Boolean(pinByKey(pinKey(ref.repo, ref.number)));
         return {
           id: pinKey(ref.repo, ref.number),
@@ -2442,6 +2549,7 @@ function openAdd(groupId = targetGroupId()) {
             el("span", { class: `rollup ${(rollup || "none").toLowerCase()}`, title: `Checks: ${(rollup || "none").toLowerCase()}` }),
             el("span", { class: "num", text: `#${node.number}` }),
             el("span", { class: "title-text", text: node.title }),
+            reviewRequested ? el("span", { class: "t-warn", text: "review requested" }) : null,
             el("span", { class: "tags" }, node.labels.nodes.filter((label) => profileFor(ref.repo).quickLabels.includes(label.name)).map(labelChip)),
             authorName(node.author?.login || "ghost"),
             el("span", { class: "age", text: ago(node.updatedAt) }),

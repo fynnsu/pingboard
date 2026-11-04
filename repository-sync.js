@@ -6,6 +6,7 @@
 const INVENTORY_FIELDS = `
   id number title url state isDraft createdAt updatedAt closedAt mergedAt
   author { login } mergedBy { login } headRefOid reviewDecision
+  reviewRequests(first: 100) { nodes { requestedReviewer { ... on User { isViewer } } } }
   additions deletions changedFiles labels(first: 20) { nodes { name color } }
   comments(last: 5) { nodes { id author { login __typename } createdAt bodyText } }
   reviews(last: 5) { nodes { id author { login } submittedAt state } }
@@ -28,6 +29,7 @@ function inventoryItem(node, repo) {
     author: node.author?.login || "ghost", createdAt: node.createdAt, updatedAt: node.updatedAt,
     closedAt: node.closedAt, mergedAt: node.mergedAt, mergedBy: node.mergedBy?.login,
     headOid: node.headRefOid, reviewDecision: node.reviewDecision,
+    reviewRequested: node.state === "OPEN" && (node.reviewRequests?.nodes || []).some((request) => request.requestedReviewer?.isViewer),
     additions: node.additions, deletions: node.deletions, files: node.changedFiles,
     labels: node.labels?.nodes || [],
     comments: (node.comments?.nodes || []).map((comment) => ({ id: comment.id, login: comment.author?.login, bot: comment.author?.__typename === "Bot", at: comment.createdAt, text: (comment.bodyText || "").slice(0, 700) })),

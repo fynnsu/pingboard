@@ -68,6 +68,7 @@ const WorkUI = {
   },
   renderList() {
     const board = document.querySelector("#board");
+    const boardScrollTop = board.scrollTop;
     const items = Work.visible();
     const title = `${Workflow.queues[Work.queue]}${Work.queue === "needs_me" ? "" : " PRs"}`;
     const empty = state.query ? "No PRs match your search." : Work.queue === "purgatory" ? "No PRs in purgatory." : this.complete() ? Work.queue === "new" ? `All caught up${state.prefs.includeDrafts ? "" : " for non-draft PRs"}. Every open PR in this view has a next step.` : "Nothing in this queue." : "Waiting for complete discovery. Your inbox may still change.";
@@ -86,6 +87,7 @@ const WorkUI = {
             el("span", { class: "num", text: shortRef(item.repo, item.number) }), authorName(item.author),
             el("span", { text: `${ago(item.createdAt || item.firstSeenAt)} old` }),
             item.isDraft ? el("span", { class: "badge", text: "Draft" }) : null,
+            item.reviewRequested ? el("span", { class: "t-warn", text: "Review requested" }) : null,
             el("span", { class: `queue-label q-${queue}`, text: item.state !== "OPEN" ? item.state.toLowerCase() : Workflow.queues[queue] }),
             pinByKey(item.key) && queue !== "purgatory" ? el("span", { class: "badge", text: "On CI board" }) : null
           ]),
@@ -99,6 +101,8 @@ const WorkUI = {
       })) : el("div", { class: "empty inbox-empty" }, [el("p", { text: empty }),
         !state.query && Work.queue === "new" && Work.counts().needs_me > 0 ? this.button("Continue with Needs me", () => Work.setQueue("needs_me"), true) : null])
     );
+    // Preserve the inbox viewport while discovery or a background refresh rebuilds it.
+    board.scrollTop = boardScrollTop;
   },
   triagePanel(item, compact = false) {
     const decision = Work.decision(item);
@@ -136,21 +140,29 @@ const WorkUI = {
   renderDetail(index) {
     const detail = document.querySelector("#detail");
     const item = Work.ref(state.cursor);
+    const detailScrollTop = detail.dataset.key === item?.key ? detail.scrollTop : 0;
     if (!item) {
       detail.replaceChildren(el("div", { class: "detail-empty" }, [el("h2", { text: "Give every PR a next step" }),
         el("p", { text: "Select a PR to read its description, assess the change, and decide what happens next." }),
         el("p", { class: "small muted", text: "j / k to move · t take on · w wait · s defer · d route · n respond · x close" })]));
+      detail.scrollTop = 0;
+      delete detail.dataset.key;
       return;
     }
     const pr = state.data.get(item.key);
     if (pr) renderDetail(index);
-    else detail.replaceChildren(el("div", { class: "detail-head" }, [
+    else {
+      detail.replaceChildren(el("div", { class: "detail-head" }, [
       el("a", { href: safeUrl(item.url), target: "_blank", rel: "noopener", text: `${item.repo}#${item.number}` }),
       el("h2", { text: item.title }),
       el("p", { class: "muted", text: `${item.author} · +${item.additions} −${item.deletions} in ${item.files} files` }),
+      item.reviewRequested ? el("p", { class: "t-warn", text: "Your review is requested" }) : null,
       el("p", { class: "small muted", text: state.status.get(item.key)?.error || "Loading description and CI details…" }),
       state.status.get(item.key)?.error ? this.button("Retry details", () => queueRefresh(item, { force: true })) : null
-    ]));
+      ]));
+      detail.scrollTop = detailScrollTop;
+      detail.dataset.key = item.key;
+    }
     const fragment = document.createDocumentFragment();
     fragment.append(this.triagePanel(item));
     const body = pr?.body ?? item.body;
