@@ -315,8 +315,6 @@ a.num:hover { text-decoration: underline; color: var(--text); }
 .detail > * { max-width: 1500px; }
 .detail-head { display: flow-root; }
 .detail-tools { float: right; margin: 0 0 8px 16px; }
-.panel.comments { border-bottom: 0; }
-.comment-list { display: grid; gap: 6px; }
 .detail-body { display: grid; gap: 0 32px; }
 .detail-col { min-width: 0; }
 .panel { display: grid; gap: 8px; padding: 14px 0; border-bottom: 1px solid var(--line); }
@@ -348,10 +346,25 @@ a.num:hover { text-decoration: underline; color: var(--text); }
 
 .label-wrap { display: flex; flex-wrap: wrap; gap: 5px; }
 
-.comment { display: grid; align-content: start; gap: 1px; padding: 6px 8px; margin: 0 -8px; text-decoration: none; border-radius: 4px; }
-.comment:hover { background: var(--panel-soft); }
-.comment-head { font-size: 12px; color: var(--quiet); }
-.comment-body { font-size: 13px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; }
+.detail-timeline { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.detail-timeline-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.detail-timeline-heading h3 { font-size: 14px; }
+.detail-timeline-heading p { margin-top: 2px; }
+.detail-timeline-status { min-height: 20px; margin-bottom: 4px; }
+.detail-timeline-scroll { max-height: min(680px, 62vh); overflow-y: auto; padding: 2px 8px 8px 0; overscroll-behavior: contain; }
+.detail-timeline-list { list-style: none; margin: 0; padding: 0; }
+.detail-timeline-event { display: grid; grid-template-columns: 104px 20px minmax(0, 1fr); min-height: 62px; }
+.detail-timeline-time { padding: 14px 8px 0 0; color: var(--quiet); font-size: 11px; line-height: 1.25; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.detail-timeline-axis { position: relative; display: flex; justify-content: center; }
+.detail-timeline-axis::before { content: ""; position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line-strong); }
+.detail-timeline-event:first-child .detail-timeline-axis::before { top: 19px; }
+.detail-timeline-event:last-child .detail-timeline-axis::before { bottom: calc(100% - 19px); }
+.detail-timeline-marker { position: relative; z-index: 1; width: 10px; height: 10px; margin-top: 14px; flex: 0 0 auto; border: 2px solid var(--panel); border-radius: 50%; background: var(--event-color, var(--muted)); box-shadow: 0 0 0 1px var(--event-color, var(--muted)); }
+.detail-timeline-entry { align-self: start; min-width: 0; margin: 5px 0 7px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-soft); }
+.detail-timeline-entry > strong { display: block; font-size: 13px; }
+.detail-timeline-entry > p { margin: 5px 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.detail-timeline-entry > a { display: inline-block; margin-top: 5px; font-size: 12px; }
+.event-comment, .event-commit, .event-label { --event-color: var(--muted); }
 
 /* The list is usually the narrow side. Below full width the next-step button
    lives only in the detail pane, and the × sits in the row's corner. */

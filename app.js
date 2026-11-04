@@ -1926,8 +1926,43 @@ function reviewWord(pr) {
 
 /* Detail pane */
 
+function ensureDetailTimeline(item) {
+  if (!Work.ready || !Work.timeline || !item?.id || !item.createdAt) return;
+  Work.timeline.ensure({ items: [item], repos: [], since: item.createdAt });
+}
+
+function detailTimeline(item) {
+  ensureDetailTimeline(item);
+  const record = Work.history.get(item.id);
+  const events = Timeline.events(item, record, [...Work.events.values()], Work.decision(item)).slice().reverse();
+  const error = Work.timeline?.errors.get(item.id);
+  const complete = Work.timeline?.fresh(record, item.createdAt, item);
+  const status = error
+    ? `${error.message} History may be incomplete.`
+    : complete
+      ? `${events.length} event${events.length === 1 ? "" : "s"} · newest first`
+      : `Loading full PR history${Work.timeline?.current ? ` · ${Work.timeline.current}` : "…"}`;
+  return el("section", { class: "detail-timeline", "aria-label": `Timeline for ${item.key}`, "data-key": item.key }, [
+    el("div", { class: "detail-timeline-heading" }, [
+      el("div", {}, [el("h3", { text: "PR timeline" }), el("p", { class: "small muted", text: "Comments and notable changes" })]),
+      error ? WorkUI.button("Retry timeline", () => Work.timeline?.retry()) : null
+    ]),
+    el("div", { class: `detail-timeline-status small${error ? " t-bad" : ""}`, role: "status", "aria-live": "polite", text: status }),
+    el("div", { class: "detail-timeline-scroll", tabindex: "0", role: "region", "aria-label": `Events for ${item.key}` }, [
+      el("ol", { class: "detail-timeline-list" }, events.map((event) => el("li", { class: "detail-timeline-event" }, [
+        el("time", { class: "detail-timeline-time", dateTime: event.at, text: new Date(event.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) }),
+        el("div", { class: "detail-timeline-axis", "aria-hidden": "true" }, [el("span", { class: `detail-timeline-marker event-${event.kind}`, title: event.label })]),
+        el("article", { class: "detail-timeline-entry" }, TimelineUI.eventDetails(event, false))
+      ])))
+    ])
+  ]);
+}
+
 function renderDetail(index) {
   const detail = document.querySelector("#detail");
+  const previousTimeline = detail.querySelector(".detail-timeline");
+  const previousTimelineKey = previousTimeline?.dataset.key;
+  const previousTimelineScrollTop = previousTimeline?.querySelector(".detail-timeline-scroll")?.scrollTop;
   const pin = cursorPin();
   const pr = cursorPR();
   if (!pin) return detail.replaceChildren(el("div", { class: "detail-empty", text: "Select a pull request to see its CI, failures and actions." }));
@@ -1950,7 +1985,7 @@ function renderDetail(index) {
   const { own, shared, baselineReady } = splitFailures(pr, index);
   const blocks = [];
   const primary = [];   // CI: the wide column
-  const side = [];      // branch, review, labels, comments
+  const side = [];      // branch, review, labels
 
   blocks.push(el("div", { class: "detail-head" }, [
     el("div", { class: "btn-row detail-tools" }, [
@@ -2036,26 +2071,19 @@ function renderDetail(index) {
     ]));
   }
 
-  const comments = [];
-  if (pr.comments.length) {
-    const section = panel("Latest comments", [el("div", { class: "comment-list" }, pr.comments.slice().reverse().map((comment) => el("a", { class: "comment", href: comment.url, target: "_blank", rel: "noopener" }, [
-      el("span", { class: "comment-head", text: `${comment.login} · ${ago(comment.at)} ago` }),
-      el("span", { class: "comment-body", text: comment.text })
-    ])))]);
-    section.classList.add("comments");
-    comments.push(section);
-  }
-
   if (primary.length) {
     blocks.push(el("div", { class: "detail-body" }, [
       el("div", { class: "detail-col" }, primary),
       el("div", { class: "detail-col" }, side)
     ]));
   }
-  // Comments run the full width below, newest first.
-  blocks.push(...comments);
+  // The full activity history runs the width of the detail pane below CI and actions.
+  blocks.push(detailTimeline(pr));
 
   detail.replaceChildren(...blocks);
+  if (previousTimelineKey === pr.key && Number.isFinite(previousTimelineScrollTop)) {
+    detail.querySelector(".detail-timeline-scroll").scrollTop = previousTimelineScrollTop;
+  }
 }
 
 function panel(title, children) {

@@ -22,6 +22,18 @@ const TimelineUI = {
       return !query || `${item.title} ${item.key} ${item.author} ${(item.labels || []).map((label) => label.name).join(" ")} ${Work.decision(item)?.note || ""}`.toLowerCase().includes(query);
     }).sort((a, b) => Workflow.compare(a, b, state.prefs.timelineSort));
   },
+  eventDetails(event, includeTime = true) {
+    const meta = [
+      includeTime ? new Date(event.at).toLocaleString() : null,
+      event.actor || null
+    ].filter(Boolean).join(" · ");
+    return [
+      el("strong", { class: `event-text-${event.kind}`, text: event.label }),
+      meta ? el("div", { class: "small muted", text: meta }) : null,
+      event.message ? el("p", { text: event.message }) : null,
+      event.url?.startsWith("https://github.com/") ? el("a", { href: event.url, target: "_blank", rel: "noopener noreferrer", text: "View on GitHub ↗" }) : null
+    ];
+  },
   mount(host) {
     const select = (label, options, change) => el("label", { class: "small" }, [label, el("select", { "aria-label": label, onchange: (event) => change(event.target.value) }, options.map(([value, text]) => el("option", { value, text })))]);
     host.append(
@@ -173,7 +185,7 @@ const TimelineUI = {
   },
   row(item, range) {
     const record = Work.history.get(item.id);
-    const events = Timeline.events(item, record, [...Work.events.values()]);
+    const events = Timeline.events(item, record, [...Work.events.values()], Work.decision(item));
     const status = item.state === "OPEN" ? item.isDraft ? "Draft" : "Open" : item.state === "MERGED" ? "Merged" : "Closed";
     const ready = Work.timeline?.fresh(record, new Date(range.start).toISOString(), item);
     const lane = el("div", { class: `timeline-lane state-${item.state.toLowerCase()}`, "data-state": item.state });
@@ -218,11 +230,7 @@ const TimelineUI = {
       onfocusout: (event) => { if (!tip.contains(event.relatedTarget) && event.relatedTarget !== anchor) this.scheduleHide(); },
       onkeydown: (event) => { if (event.key === "Escape") { event.stopPropagation(); close(); } }
     }, [el("div", { class: "split" }, [el("strong", { text: `#${item.number} · ${events.length === 1 ? events[0].label : `${events.length} updates`}` }), el("button", { class: "link-btn", text: "Close", onclick: close })]),
-      el("ol", {}, events.map((event) => el("li", {}, [el("strong", { class: `event-text-${event.kind}`, text: event.label }),
-        el("div", { class: "small muted", text: `${new Date(event.at).toLocaleString()}${event.actor ? ` · ${event.actor}` : ""}` }),
-        ...(event.message ? [el("p", { text: event.message })] : []),
-        ...(event.url?.startsWith("https://github.com/") ? [el("a", { href: event.url, target: "_blank", rel: "noopener noreferrer", text: "View on GitHub ↗" })] : [])
-      ])))
+      el("ol", {}, events.map((event) => el("li", {}, this.eventDetails(event))))
     ]);
     this.tip = tip;
     document.body.append(tip);

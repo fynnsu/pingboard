@@ -78,6 +78,16 @@ try {
   await rendered();
   assert.equal(historyCalls().length, requestCount, "idle renders do not refetch history");
 
+  await page.evaluate(() => Work.openItem(Work.items.get("PR_1"), "inbox"));
+  await page.waitForFunction(() => state.data.has("acme/widgets#1"));
+  await page.locator(".detail-timeline").waitFor();
+  assert.ok(await page.locator(".detail-timeline-event").count() >= 60, "focused PR shows the full event timeline");
+  assert.match(await page.locator(".detail-timeline").innerText(), /Ready for review/);
+  assert.match(await page.locator(".detail-timeline").innerText(), /Comment/);
+  assert.match(await page.locator(".detail-timeline").innerText(), /Commit/);
+  await page.getByRole("button", { name: "Timeline", exact: true }).click();
+  await settled();
+
   const row = page.locator('.timeline-table tr[data-key="acme/widgets#101"]');
   assert.equal(await row.locator(".timeline-life").count(), 1);
   const endpoint = await page.evaluate(() => {

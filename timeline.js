@@ -63,7 +63,7 @@ const Timeline = {
     return { id: node.id, kind: type[0], label: type[1], at, actor: node.actor?.login || node.author?.login || node.commit?.author?.user?.login || node.commit?.author?.name || "",
       message: (node.bodyText || node.label?.name || (node.commit ? `${node.commit.messageHeadline}\nCommit timestamp; may precede its push to this PR.` : "")).slice(0, 700), url: node.url || node.commit?.url || "" };
   },
-  events(item, history, localEvents = []) {
+  events(item, history, localEvents = [], currentDecision = null) {
     const events = new Map((history?.events || []).map((event) => [event.id, event]));
     events.set(`${item.id}:opened`, { id: `${item.id}:opened`, kind: "opened", label: "Opened", at: item.createdAt, actor: item.author });
     const end = item.mergedAt || item.closedAt;
@@ -72,10 +72,21 @@ const Timeline = {
       events.set(`${item.id}:end`, { id: `${item.id}:end`, kind, label: kind === "merged" ? "Merged" : "Closed", at: end, actor: item.mergedBy });
     }
     // These are private decisions made in Pingboard, never inferred from GitHub.
+    const latestLocal = [...localEvents]
+      .filter((event) => event.itemId === item.id && !event.reverted && event.source !== "github" && ["triage", "followup", "restore"].includes(event.kind))
+      .sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || a.id.localeCompare(b.id))
+      .at(-1);
+    const waitingLabels = { author: "Author", reviewer: "Reviewer", ci: "CI" };
     for (const event of localEvents) {
       if (event.itemId !== item.id || event.reverted || event.source === "github" || !["triage", "followup", "restore"].includes(event.kind)) continue;
+      const rawDetails = (event.message || "").split(" · ").slice(1).join(" · ");
+      const additions = latestLocal?.id === event.id && currentDecision ? [
+        currentDecision.status === "waiting" && currentDecision.waitingFor ? `Waiting for ${waitingLabels[currentDecision.waitingFor] || currentDecision.waitingFor}` : null,
+        currentDecision.dueAt ? `Follow up ${new Date(currentDecision.dueAt).toLocaleString()}` : null
+      ].filter((detail) => detail && !rawDetails.includes(detail)) : [];
+      const details = [rawDetails, ...additions].filter(Boolean).join(" · ");
       events.set(event.id, { id: event.id, kind: "local", label: event.kind === "restore" ? "Restored to inbox" : `Triage: ${event.message?.split(" · ")[0] || "follow-up"}`,
-        at: event.at, actor: event.actor, message: event.message || "Personal Pingboard decision" });
+        at: event.at, actor: event.actor, message: details || event.message || "Personal Pingboard decision" });
     }
     return [...events.values()].filter((event) => Number.isFinite(Date.parse(event.at)) && (event.kind !== "commit" || Date.parse(event.at) >= Date.parse(item.createdAt))).sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || a.id.localeCompare(b.id));
   },
