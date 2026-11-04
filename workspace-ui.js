@@ -10,35 +10,24 @@ const WorkUI = {
       class: `nav-btn${state.page === page ? " active" : ""}`, "aria-pressed": String(state.page === page), text: label, onclick: () => Work.setPage(page)
     }))));
     const bar = document.querySelector("#workspace-toolbar");
-    const progress = Workflow.progress(Work.scopedEvents(), Work.login);
     // Keep native controls mounted while discovery and CI refresh in the background.
-    if (!bar.children.length) bar.append(
-      el("div", { class: "workspace-scope" }, [el("select", { "aria-label": "Repository", onchange: (event) => Work.setRepo(event.target.value) })]),
-      el("div", { class: "inbox-options" }, [
+    if (!bar.children.length) bar.append(el("div", { class: "inbox-options" }, [
         el("label", { class: "small" }, ["Sort ", el("select", { "aria-label": "Inbox sort order", onchange: (event) => Work.setInboxOptions({ inboxSort: event.target.value }) },
           Object.entries(Workflow.sorts).map(([value, text]) => el("option", { value, text })))]),
         el("label", { class: "check-row small" }, [el("input", { type: "checkbox", "aria-label": "Include draft PRs", onchange: (event) => Work.setInboxOptions({ includeDrafts: event.target.checked }) }), "Include drafts"])
-      ]),
-      el("div", { class: "daily-progress" }, [el("span", { id: "daily-progress-label" }), el("progress", { "aria-labelledby": "daily-progress-label" })])
-    );
-    const repoSelect = bar.querySelector('[aria-label="Repository"]');
+      ]));
+    const repoSelect = document.querySelector("#workspace-repo");
     const repos = Work.repositories();
     if (repoSelect.dataset.repos !== JSON.stringify(repos)) {
       repoSelect.replaceChildren(el("option", { value: "", text: "All repositories" }), ...repos.map((repo) => el("option", { value: repo, text: repo })));
       repoSelect.dataset.repos = JSON.stringify(repos);
     }
     if (repoSelect.value !== Work.repo) repoSelect.value = Work.repo;
+    bar.hidden = state.page !== "inbox";
     bar.querySelector(".inbox-options").hidden = state.page !== "inbox";
     const sort = bar.querySelector('[aria-label="Inbox sort order"]');
     if (sort.value !== state.prefs.inboxSort) sort.value = state.prefs.inboxSort;
     bar.querySelector('[aria-label="Include draft PRs"]').checked = state.prefs.includeDrafts;
-    const goal = state.prefs.dailyGoal;
-    const current = progress.moved;
-    const label = bar.querySelector("#daily-progress-label");
-    label.className = current >= goal ? "t-good" : "";
-    label.textContent = `${current >= goal ? "✓ " : ""}${current} / ${goal} moved forward today`;
-    bar.querySelector("progress").max = goal;
-    bar.querySelector("progress").value = Math.min(current, goal);
     const filter = document.querySelector("#filter");
     filter.placeholder = state.page === "board" ? "Filter pinned PRs" : "Search PRs, authors, labels";
     filter.setAttribute("aria-label", filter.placeholder);
@@ -115,23 +104,26 @@ const WorkUI = {
     const decision = Work.decision(item);
     const queue = Workflow.queue(item, decision);
     const btn = (label, type) => el("button", { class: "btn", disabled: !Work.ready || Work.saving || Boolean(Work.error), text: label, onclick: () => this.action(type, item) });
+    const openInbox = el("button", { class: "btn triage-open-inbox", type: "button", text: "Open in PR inbox", onclick: () => Work.openItem(item, "inbox") });
     if (queue === "purgatory") return el("section", { class: "triage-panel", "aria-label": "Personal triage" }, [
       el("h3", { text: "Purgatory" }), el("p", { class: "small muted", text: "This PR stays hidden until you choose to bring it back. GitHub updates and reminders will not resurface it." }),
       decision?.note ? el("p", { class: "triage-note", text: decision.note }) : null,
       btn("Restore to inbox", "restore")
     ]);
     const node = el("section", { class: "triage-panel", "aria-label": "Personal triage" }, [
-      el("div", { class: "split" }, [el("h3", { text: `Personal triage · ${Workflow.queues[queue]}` }), el("span", { class: "small muted", text: "Notes & reminders are private" })]),
+      el("div", { class: "split" }, [el("h3", { text: `Personal triage · ${Workflow.queues[queue]}` })]),
       decision?.note ? el("p", { class: "triage-note", text: decision.note }) : null,
       decision?.reason ? el("p", { class: "t-warn", text: decision.reason }) : null,
       decision?.dueAt && item.state === "OPEN" ? el("p", { class: "small muted", text: `Follow up ${new Date(decision.dueAt).toLocaleString()}` }) : null,
       item.state === "OPEN" ? el("div", { class: "btn-row triage-actions" }, [
         ...(compact ? [queue !== "needs_me" || Workflow.boardLane(item, decision) === "updated" ? btn("Take on", "take") : null, btn("Waiting…", "wait"), btn("Later…", "later"), btn("Purgatory", "purgatory")]
-          : [btn("Take on · t", "take"), btn("Waiting · w", "wait"), btn("Later · s", "later"), btn("Purgatory", "purgatory"), btn("Route · d", "route"), btn("Respond · n", "comment"), btn("Close PR… · x", "close")])
+          : [btn("Take on · t", "take"), btn("Waiting · w", "wait"), btn("Later · s", "later"), btn("Purgatory", "purgatory"), btn("Route · d", "route"), btn("Respond · n", "comment"), btn("Close PR… · x", "close")]),
+        compact ? el("span", { class: "spacer" }) : null,
+        compact ? openInbox : null
       ]) : el("p", { class: "small muted", text: "Resolved on GitHub. Your decisions and activity remain saved." }),
-      compact ? this.button("Open in PR inbox", () => Work.openItem(item, "inbox"))
-        : pinByKey(item.key) ? this.button("View on CI board", () => Work.openItem(item, "board"))
-          : el("p", { class: "small muted", text: "Take on, Waiting, and Later add this PR to the matching CI board group." })
+      compact && item.state !== "OPEN" ? el("div", { class: "btn-row triage-actions" }, [el("span", { class: "spacer" }), openInbox]) : null,
+      !compact && (pinByKey(item.key) ? this.button("View on CI board", () => Work.openItem(item, "board"))
+        : el("p", { class: "small muted", text: "Take on, Waiting, and Later add this PR to the matching CI board group." }))
     ]);
     return node;
   },

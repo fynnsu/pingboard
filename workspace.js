@@ -170,7 +170,6 @@ const Work = {
   openItem(item, page) {
     if (!this.matchesRepo(item)) this.setRepo(item.repo);
     if (page === "board") {
-      state.filter = "all";
       this.boardQueue = "all";
       const pin = pinByKey(item.key);
       const group = boardGroups().find((entry) => entry.lane ? entry.lane === pinLane(pin) : entry.id === pin?.group);

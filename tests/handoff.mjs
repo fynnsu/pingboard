@@ -42,6 +42,9 @@ try {
   await page.waitForFunction(() => state.page === "board" && state.cursor === "acme/widgets#1");
   assert.deepEqual(await rowKeys(), ["acme/widgets#1"]);
   assert.match(await page.locator("#board .row").innerText(), /Needs me/);
+  assert.equal(await page.locator("#workspace-toolbar").isHidden(), true, "the board has no extra toolbar row");
+  assert.equal(await page.locator(".triage-actions .triage-open-inbox").count(), 1, "inbox navigation shares the compact action row");
+  assert.doesNotMatch(await page.locator(".triage-panel").innerText(), /Notes & reminders are private/);
 
   await page.getByRole("button", { name: "Waiting…", exact: true }).click();
   await page.getByLabel("Private note · optional", { exact: true }).fill("Wait for the new CI run");
@@ -63,7 +66,6 @@ try {
   assert.equal(await page.locator(".inbox-row").count(), 3);
   assert.match(await page.locator("#detail h2").innerText(), /runner:/);
   assert.equal(await page.evaluate(() => Work.decision(Work.ref(state.cursor)) || null), null, "equal PR numbers in different repos have separate decisions");
-  assert.match(await page.locator("#daily-progress-label").innerText(), /^0 \/ 3/);
   await page.getByRole("button", { name: "Take on · t", exact: true }).click();
   await page.waitForFunction(() => !Work.saving && Boolean(pinByKey("acme/runner#1")));
   await page.getByRole("button", { name: "CI board", exact: true }).click();
@@ -71,14 +73,13 @@ try {
   // A shared filter is still applied across repository changes; reset it explicitly.
   await page.getByRole("combobox", { name: "Triage status", exact: true }).selectOption("all");
   assert.deepEqual(await rowKeys(), ["acme/runner#1"]);
-  assert.match(await page.locator("#chips").innerText(), /All\s+1/);
+  assert.equal(await page.locator("#chips").isHidden(), true, "the unused CI filter chips are gone");
   await selectRepo("acme/widgets");
   assert.deepEqual(await rowKeys(), ["acme/widgets#1"]);
   assert.equal(await page.evaluate(() => state.cursor), "acme/widgets#1");
   assert.match(await page.locator(".triage-panel").innerText(), /Wait for the new CI run/);
   await selectRepo("");
   assert.deepEqual(await rowKeys(), ["acme/widgets#1", "acme/runner#1"]);
-  assert.match(await page.locator("#daily-progress-label").innerText(), /^2 \/ 3/);
   await page.reload();
   await ready();
   assert.equal(await page.evaluate(() => Work.repo), "", "All repositories survives reload");

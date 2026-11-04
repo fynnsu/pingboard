@@ -485,19 +485,13 @@ a.num:hover { text-decoration: underline; color: var(--text); }
 .nav-btn { border: 0; border-radius: var(--radius); padding: 6px 10px; font: inherit; font-weight: 500; color: var(--muted); background: transparent; cursor: pointer; white-space: nowrap; }
 .nav-btn:hover { color: var(--text); background: var(--panel-soft); }
 .nav-btn.active { color: var(--accent); background: var(--accent-soft); }
+.workspace-repo { width: min(220px, 100%); }
 .top .chips { order: 4; width: 100%; flex-wrap: wrap; }
 .top .filter { flex: 1; min-width: 160px; max-width: 320px; }
 .workspace-toolbar { display: flex; align-items: center; gap: 10px 18px; flex-wrap: wrap; padding: 10px 18px; border-bottom: 1px solid var(--line); background: var(--panel-soft); }
-.workspace-scope { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-right: auto; min-width: 0; }
-.workspace-scope select { max-width: 100%; }
 .inbox-options { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; margin-right: auto; }
 .inbox-options .check-row { margin: 0; }
 .inbox-options select { max-width: 100%; }
-.daily-progress { display: grid; gap: 4px; font-size: 13px; min-width: 190px; font-variant-numeric: tabular-nums; }
-.daily-progress progress { appearance: none; width: 100%; height: 5px; border: 0; border-radius: 4px; overflow: hidden; background: var(--line); accent-color: var(--accent); }
-.daily-progress progress::-webkit-progress-bar { background: var(--line); }
-.daily-progress progress::-webkit-progress-value { background: var(--accent); }
-.daily-progress progress::-moz-progress-bar { background: var(--accent); }
 .inbox-heading { display: grid; gap: 3px; margin-bottom: 12px; }
 .tone-neutral .verdict { color: var(--muted); }
 .inbox-heading h2 { font-size: 19px; }
@@ -527,6 +521,7 @@ a.num:hover { text-decoration: underline; color: var(--text); }
 .triage-panel .split { flex-wrap: wrap; gap: 4px; }
 .triage-note { white-space: pre-wrap; overflow-wrap: anywhere; }
 .triage-actions { flex-wrap: wrap; }
+.triage-open-inbox { padding: 3px 8px; font-size: 12px; }
 .pr-description { margin: 16px 0; }
 .pr-description summary, .activity-history summary { cursor: pointer; color: var(--muted); font-weight: 600; margin-bottom: 10px; }
 .description-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; max-height: 300px; overflow-y: auto; line-height: 1.6; }
@@ -639,7 +634,6 @@ a.num:hover { text-decoration: underline; color: var(--text); }
 .recent-work li { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding: 8px 0; }
 .recent-work .btn { border: 0; background: none; padding-left: 0; }
 @media (max-width: 950px) {
-  .workspace-scope .small { display: none; }
   .progress-stats { gap: 10px; }
   .progress-stat { padding: 14px; }
 }
@@ -650,8 +644,7 @@ a.num:hover { text-decoration: underline; color: var(--text); }
   .top .chips { gap: 1px; }
   .chip-btn { padding: 4px 7px; }
   .workspace-toolbar { align-items: center; }
-  .workspace-scope { width: 100%; }
-  .daily-progress { flex: 1; min-width: 130px; }
+  .workspace-repo { flex: 1; min-width: 130px; }
   .detail-tools { float: none; margin: 0 0 12px; }
   .workspace-toolbar .btn { font-size: 12px; }
   .main.inbox-view, .main.board-view { display: block; overflow-y: auto; }
