@@ -36,6 +36,21 @@ const BOARD_WIDTH = 520;            // default list width in px; the detail pane
 const BOARD_MIN = 280;
 const DETAIL_MIN = 380;
 const RATE_FLOOR = 150;             // stop background polling below this many points
+const BOARD_STATUS_GROUPS = [
+  ["updated", "Updated"],
+  ["working", "In progress"],
+  ["waiting", "Waiting"],
+  ["later", "Later"],
+  ["new", "Untriaged pins"],
+  ["resolved", "Resolved"]
+];
+
+function normalizeBoardStatusOrder(raw) {
+  const lanes = BOARD_STATUS_GROUPS.map(([lane]) => lane);
+  const requested = Array.isArray(raw) ? raw.filter((lane) => lanes.includes(lane)) : [];
+  const unique = [...new Set(requested)];
+  return unique.concat(lanes.filter((lane) => !unique.includes(lane)));
+}
 
 /* Per-repo workflow knowledge. Anything not listed gets GENERIC_PROFILE. */
 const REPO_PROFILES = {
@@ -225,6 +240,7 @@ function normalizePrefs(raw) {
     timelineScope: ["all", "board", "open", "resolved", "purgatory"].includes(prefs.timelineScope) ? prefs.timelineScope : "all",
     timelineSort: Object.hasOwn(Workflow.sorts, prefs.timelineSort) ? prefs.timelineSort : "newest",
     boardGrouping: prefs.boardGrouping === "manual" ? "manual" : "status",
+    boardStatusOrder: normalizeBoardStatusOrder(prefs.boardStatusOrder),
     boardStatusCollapsed: Object.fromEntries(["updated", "working", "waiting", "later", "new", "resolved"].map((status) => [status,
       typeof prefs.boardStatusCollapsed?.[status] === "boolean" ? prefs.boardStatusCollapsed[status] : !["updated", "working"].includes(status)])),
     dailyGoal: Number.isInteger(prefs.dailyGoal) && prefs.dailyGoal >= 1 && prefs.dailyGoal <= 100 ? prefs.dailyGoal : 10,
@@ -1241,8 +1257,38 @@ function isBoardPin(pin) { return Work.matchesRepo(pin) && pinLane(pin) !== "pur
 
 function boardGroups() {
   if (state.prefs.boardGrouping === "manual") return state.board.groups;
-  return [["updated", "Updated"], ["working", "In progress"], ["waiting", "Waiting"], ["later", "Later"], ["new", "Untriaged pins"], ["resolved", "Resolved"]]
-    .map(([lane, name]) => ({ id: `status:${lane}`, lane, name, collapsed: state.prefs.boardStatusCollapsed[lane] }));
+  const names = new Map(BOARD_STATUS_GROUPS);
+  return normalizeBoardStatusOrder(state.prefs.boardStatusOrder)
+    .map((lane) => ({ id: `status:${lane}`, lane, name: names.get(lane), collapsed: state.prefs.boardStatusCollapsed[lane] }));
+}
+
+function reorderStatusGroup(lane, beforeLane = null) {
+  if (!lane || lane === beforeLane) return;
+  const order = normalizeBoardStatusOrder(state.prefs.boardStatusOrder);
+  const from = order.indexOf(lane);
+  if (from < 0) return;
+  order.splice(from, 1);
+  const at = beforeLane === null ? order.length : order.indexOf(beforeLane);
+  if (at < 0) return;
+  order.splice(at, 0, lane);
+  state.prefs.boardStatusOrder = order;
+  persistPrefs();
+  render();
+}
+
+function movePinToStatus(key, lane) {
+  const pin = pinByKey(key);
+  const item = Work.ref(key);
+  if (!pin || !item || !lane || !Work.ready || Work.saving || Work.error) return;
+  if (lane === "updated") return toast("Updated is automatic — move this PR to In progress, Waiting, or Later.");
+  if (lane === "resolved") return toast("Resolved follows the PR’s GitHub state.");
+  if (pinLane(pin) === lane) return;
+  state.prefs.boardStatusCollapsed[lane] = false;
+  persistPrefs();
+  if (lane === "working") return WorkUI.action("take", item);
+  if (lane === "waiting") return WorkUI.action("wait", item);
+  if (lane === "later") return WorkUI.action("later", item);
+  if (lane === "new") return Work.decide(item, { status: "new" });
 }
 
 function setGroupCollapsed(group, collapsed) {
@@ -1501,6 +1547,8 @@ function render() {
 
 let pointerHeld = false;
 let dragKey = null;
+let dragLane = null;
+let dragBeforeLane = null;
 let renderSkipped = false;      // a render was requested while it was unsafe to swap the DOM
 let scrollAfterRender = false;
 
@@ -1524,7 +1572,7 @@ function keepFocus(container, build) {
 function flushRender() {
   // Replacing nodes mid-press would swallow the click, mid-drag would cancel it,
   // and mid-selection would throw away what the user is trying to copy.
-  if (pointerHeld || dragKey || selectingText()) {
+  if (pointerHeld || dragKey || dragLane || selectingText()) {
     renderSkipped = true;
     return;
   }
@@ -1803,30 +1851,91 @@ function renderBoard(index) {
   const groupingSelect = header.querySelector('[aria-label="Board grouping"]');
   if (groupingSelect.value !== state.prefs.boardGrouping) groupingSelect.value = state.prefs.boardGrouping;
   header.querySelector("p").textContent = state.prefs.boardGrouping === "status"
-    ? "Replies and due reminders return to Updated. Waiting and Later stay out of the way."
+    ? "Drag headings over a group to snap to its nearest divider, or drag a PR to a different triage status. Replies and due reminders return to Updated."
     : "Your groups and pin order. Switch to Triage status to group follow-ups automatically.";
   const triageSelect = header.querySelector('[aria-label="Triage status"]');
   if (triageSelect.value !== Work.boardQueue) triageSelect.value = Work.boardQueue;
   const groups = board.querySelector(":scope > .board-groups") || el("div", { class: "board-groups" });
   if (header.parentNode !== board) board.replaceChildren(header, groups);
   const sections = [];
+  const statusGrouping = state.prefs.boardGrouping === "status";
+  const setStatusDropGap = (beforeLane) => {
+    dragBeforeLane = beforeLane;
+    const marker = beforeLane || "end";
+    for (const gap of groups.querySelectorAll(":scope > .group-gap")) gap.classList.toggle("drop", gap.dataset.before === marker);
+  };
+  const groupGap = (beforeLane = null) => el("div", {
+    class: "group-gap",
+    "data-before": beforeLane || "end",
+    ondragover: (event) => {
+      if (!dragLane) return;
+      event.preventDefault();
+      setStatusDropGap(beforeLane);
+    },
+    ondragleave: (event) => event.currentTarget.classList.remove("drop"),
+    ondrop: (event) => {
+      if (!dragLane) return;
+      event.preventDefault();
+      event.currentTarget.classList.remove("drop");
+      reorderStatusGroup(dragLane, beforeLane);
+    }
+  });
   for (const group of boardGroups()) {
     const pins = groupPins(group);
-    if ((filtering || group.lane) && !pins.length) continue;
+    if (state.prefs.boardGrouping === "manual" && filtering && !pins.length) continue;
+    const emptyText = filtering ? "Nothing here matches." : group.lane && ["working", "waiting", "later", "new"].includes(group.lane)
+      ? "Empty — drop a pull request here to set its status."
+      : group.lane ? "Empty — this group fills automatically." : "Empty — drag a pull request here, or use + Add.";
+    const groupDragOver = (event) => {
+      if (dragLane && group.lane) {
+        event.preventDefault();
+        const node = event.currentTarget.closest(".group");
+        const rect = node?.getBoundingClientRect();
+        const statusGroups = boardGroups();
+        const at = statusGroups.findIndex((entry) => entry.lane === group.lane);
+        const after = rect && event.clientY >= rect.top + rect.height / 2;
+        setStatusDropGap(after ? statusGroups[at + 1]?.lane || null : group.lane);
+        return;
+      }
+      if (!dragKey) return;
+      event.preventDefault();
+      event.currentTarget.closest(".group")?.classList.add("drop");
+    };
+    const groupDrop = (event) => {
+      if (dragLane) {
+        event.preventDefault();
+        reorderStatusGroup(dragLane, dragBeforeLane);
+        return;
+      }
+      if (!dragKey) return;
+      event.preventDefault();
+      event.currentTarget.closest(".group")?.classList.remove("drop");
+      if (group.lane && state.prefs.boardGrouping === "status") movePinToStatus(dragKey, group.lane);
+      else dropPin(dragKey, group.id);
+    };
+    if (statusGrouping) sections.push(groupGap(group.lane));
     sections.push(el("div", {
       class: "group", "data-lane": group.lane,
-      ondragover: (event) => {
-        if (!dragKey) return;
-        event.preventDefault();
-        event.currentTarget.classList.add("drop");
-      },
+      ondragover: groupDragOver,
       ondragleave: (event) => event.currentTarget.classList.remove("drop"),
-      ondrop: (event) => {
-        event.preventDefault();
-        dropPin(dragKey, group.id);
-      }
+      ondrop: groupDrop
     }, [
-      el("div", { class: "group-head" }, [
+      el("div", {
+        class: "group-head",
+        draggable: String(Boolean(group.lane && state.prefs.boardGrouping === "status")),
+        title: group.lane ? "Drag to reorder this status group" : null,
+        ondragover: groupDragOver,
+        ondrop: groupDrop,
+        ondragstart: (event) => {
+          if (!group.lane || state.prefs.boardGrouping !== "status") { event.preventDefault(); return; }
+          dragKey = null;
+          dragLane = group.lane;
+          dragBeforeLane = null;
+          event.currentTarget.closest(".group")?.classList.add("dragging");
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", `status:${group.lane}`);
+        }
+      }, [
         el("button", {
           class: "group-toggle",
           title: group.collapsed ? "Expand" : "Collapse",
@@ -1846,9 +1955,10 @@ function renderBoard(index) {
       ]),
       !group.collapsed && el("div", { class: "rows" }, pins.length
         ? pins.map((pin) => row(pin, index))
-        : el("div", { class: "group-empty", text: filtering ? "Nothing here matches." : "Empty — drag a pull request here, or use + Add." }))
+        : el("div", { class: "group-empty", text: emptyText }))
     ]));
   }
+  if (statusGrouping) sections.push(groupGap());
   if (!sections.length) sections.push(el("div", { class: "empty" }, [el("p", { text: "No pinned pull requests match this filter." })]));
   else if (!filtering && state.prefs.boardGrouping === "manual") sections.push(el("button", { class: "link-btn new-group", onclick: newGroup, text: "+ New group" }));
   groups.replaceChildren(...(Work.error ? [WorkUI.syncStatus()] : []), ...sections);
@@ -1877,6 +1987,7 @@ function groupSummary(pins, index) {
 function row(pin, index) {
   const pr = state.data.get(pin.key);
   const item = Work.ref(pin.key);
+  const canDrag = state.prefs.boardGrouping === "manual" || item?.state === "OPEN";
   const queue = item && Workflow.queue(item, Work.decision(item));
   const status = state.status.get(pin.key) || {};
   const result = pr ? verdict(pr, index) : { tone: "neutral" };
@@ -1890,15 +2001,18 @@ function row(pin, index) {
   const props = {
     class: classes.join(" "),
     "data-key": pin.key,
-    draggable: String(state.prefs.boardGrouping === "manual"),
+    draggable: String(canDrag),
     onclick: () => setCursor(pin.key),
     ondragstart: (event) => {
-      if (state.prefs.boardGrouping !== "manual") { event.preventDefault(); return; }
+      if (!canDrag) { event.preventDefault(); return; }
+      dragLane = null;
+      dragBeforeLane = null;
       dragKey = pin.key;
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("text/plain", pr?.url || pin.key);
     },
     ondragover: (event) => {
+      if (state.prefs.boardGrouping !== "manual") return;
       if (!dragKey || dragKey === pin.key) return;
       event.preventDefault();
       event.stopPropagation();
@@ -1906,6 +2020,7 @@ function row(pin, index) {
     },
     ondragleave: (event) => event.currentTarget.classList.remove("drop-before"),
     ondrop: (event) => {
+      if (state.prefs.boardGrouping !== "manual") return;
       event.preventDefault();
       event.stopPropagation();
       dropPin(dragKey, pin.group, pin.key);
@@ -2929,7 +3044,10 @@ document.addEventListener("keydown", (event) => {
 }, true);
 window.addEventListener("blur", releasePointer);
 document.addEventListener("dragend", () => {
+  document.querySelector(".group.dragging")?.classList.remove("dragging");
   dragKey = null;
+  dragLane = null;
+  dragBeforeLane = null;
   pointerHeld = false;
   render();
 });

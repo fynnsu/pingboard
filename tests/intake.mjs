@@ -67,7 +67,22 @@ try {
   assert.equal(await page.locator('.group[data-lane="waiting"] .group-count').innerText(), "1");
   assert.equal(await page.locator('.group[data-lane="later"] .row').count(), 0);
   assert.equal(await page.locator('.group[data-lane="later"] .group-count').innerText(), "1");
-  assert.equal(await page.locator('.group[data-lane="new"]').count(), 0, "discovered New PRs do not populate the CI board");
+  assert.equal(await page.locator('.group[data-lane="new"] .row').count(), 0, "discovered New PRs do not populate the CI board");
+
+  const statusGroupOrder = () => page.locator("#board > .board-groups > .group").evaluateAll((groups) => groups.map((group) => group.dataset.lane));
+  assert.deepEqual(await statusGroupOrder(), ["updated", "working", "waiting", "later", "new", "resolved"]);
+  await page.locator('.group[data-lane="waiting"] .group-head').dragTo(page.locator('.group[data-lane="updated"]'), { targetPosition: { x: 4, y: 20 } });
+  await page.waitForFunction(() => state.prefs.boardStatusOrder[0] === "waiting");
+  await rendered();
+  assert.deepEqual(await statusGroupOrder(), ["waiting", "updated", "working", "later", "new", "resolved"], "status groups can be reordered");
+  assert.deepEqual(await page.evaluate(() => state.prefs.boardStatusOrder.slice(0, 3)), ["waiting", "updated", "working"], "status group order is persisted in preferences");
+
+  await page.locator('.group[data-lane="working"] .row[data-key="acme/widgets#1"]').dragTo(page.locator('.group[data-lane="waiting"] .group-head'));
+  await page.getByRole("button", { name: "Save waiting state", exact: true }).click();
+  await page.waitForFunction(() => !Work.saving && Work.decisions.get("PR_1")?.status === "waiting");
+  await page.locator('.group[data-lane="waiting"] .row[data-key="acme/widgets#1"]').waitFor();
+  assert.equal(await page.evaluate(() => Work.decisions.get("PR_1").waitingFor), "author", "moving a PR to Waiting opens the existing triage flow");
+  console.log("Status groups reorder; dragging a PR to a status updates its triage decision passed.");
 
   await page.evaluate(async () => {
     await Work.storage.put("decisions", { ...Work.decisions.get("PR_3"), dueAt: new Date(Date.now() - 1000).toISOString() });
@@ -127,7 +142,7 @@ try {
   await page.getByRole("button", { name: "CI board", exact: true }).click();
   assert.equal(await page.getByLabel("Board grouping", { exact: true }).inputValue(), "manual");
   await page.getByLabel("Board grouping", { exact: true }).selectOption("status");
-  await page.locator('.group[data-lane="working"] .row[data-key="acme/widgets#1"]').waitFor();
+  await page.locator('.group[data-lane="waiting"] .row[data-key="acme/widgets#1"]').waitFor();
   assert.equal(await page.evaluate(() => JSON.stringify(state.board)), groups, "status grouping does not rewrite manual organization");
   await page.evaluate(async () => {
     await Work.decide(Work.ref("acme/widgets#4"), { status: "waiting", dueAt: new Date(Date.now() + 86400000).toISOString() }, { track: true, advance: false });
