@@ -1823,10 +1823,10 @@ function renderBoard(index) {
   const boardScrollTop = board.scrollTop;
   if (!state.board.pins.some(isBoardPin)) {
     board.replaceChildren(el("div", { class: "empty" }, [
-      el("h2", { text: "No PRs on this CI board yet" }),
+      el("h2", { text: "No PRs on this board yet" }),
       el("p", { text: "Take on, wait, or defer a PR in the inbox to follow it here through checks, review, and merge. It stays in the inbox with the same notes and reminders." }),
       el("div", { class: "btn-row" }, [
-        el("button", { class: "btn primary big", onclick: () => Work.setQueue("new"), text: "Triage PR inbox" }),
+        el("button", { class: "btn primary big", onclick: () => Work.setQueue("new"), text: "Triage inbox" }),
         el("button", { class: "btn", onclick: () => openAdd(), text: "+ Pin PRs" })
       ])
     ]));
@@ -2180,7 +2180,7 @@ function renderDetail(index) {
   blocks.push(el("div", { class: "detail-head" }, [
     el("div", { class: "btn-row detail-tools" }, [
       btn("Open on GitHub ↗", () => openUrl(pr.url)),
-      pinByKey(pr.key) ? btn("Move to group…", () => openGroupPicker(pinByKey(pr.key))) : btn("Pin to CI board", () => addPin(pr.repo, pr.number)),
+      pinByKey(pr.key) ? btn("Move to group…", () => openGroupPicker(pinByKey(pr.key))) : btn("Pin to board", () => addPin(pr.repo, pr.number)),
       btn("Refresh", () => queueRefresh(pin, { force: true })),
       pinByKey(pr.key) ? btn("Unpin", () => removePin(pr.key)) : null
     ]),

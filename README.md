@@ -1,14 +1,14 @@
 # Pingboard
 
-Give every pull request a next step. Pingboard discovers your repositories’ PRs, helps you triage them quickly, brings follow-ups back when they need attention, and tracks your daily progress. The CI board remains your working set for shepherding selected PRs through checks, review, and merge.
+Give every pull request a next step. Pingboard discovers your repositories’ PRs, helps you triage them quickly, brings follow-ups back when they need attention, and tracks your daily progress. The board remains your working set for shepherding selected PRs through checks, review, and merge.
 
 <img width="1668" height="1027" alt="Screenshot 2026-10-08 at 12 57 06 PM" src="https://github.com/user-attachments/assets/458d4cbf-d81b-4962-937f-36c99a792ed9" />
 
 It is a static page that talks to the GitHub API from your browser: no server, no build step, no dependencies. It is tuned for [vllm-project/vllm](https://github.com/vllm-project/vllm) and works for any repository.
 
-## PR inbox
+## Inbox
 
-Choose **Repositories to discover** in Settings. The inbox automatically loads every open PR across all pages. Choose **Oldest first**, **Newest first**, or **Most recent changes**, and toggle **Include drafts**; both preferences survive reloads. **Take on** moves a PR to **Needs me** and adds it to your CI board. **Waiting** and **Later** also add it to their board groups. Both views share triage, notes, and reminders. Existing pinned boards and settings load unchanged; existing open PRs start as an untriaged backlog rather than being counted as new arrivals.
+Choose **Repositories to discover** in Settings. The inbox automatically loads every open PR across all pages. Choose **Oldest first**, **Newest first**, or **Most recent changes**, and toggle **Include drafts**; both preferences survive reloads. **Take on** moves a PR to **Needs me** and adds it to your board. **Waiting** and **Later** also add it to their board groups. Both views share triage, notes, and reminders. Existing pinned boards and settings load unchanged; existing open PRs start as an untriaged backlog rather than being counted as new arrivals.
 
 | Queue | What belongs here |
 | --- | --- |
@@ -18,7 +18,7 @@ Choose **Repositories to discover** in Settings. The inbox automatically loads e
 | **Later** | Deliberately deferred until a revisit date. A note is optional. |
 | **Resolved** | PRs observed merged or closed on GitHub. Reopened PRs return to attention. |
 | **All** | Every discovered PR except those in Purgatory, subject to the draft filter. |
-| **Purgatory** | Set aside indefinitely without closing on GitHub. Hidden from other inbox tabs and the CI board; updates do not resurface it. Restore it to New when you want to reconsider it. |
+| **Purgatory** | Set aside indefinitely without closing on GitHub. Hidden from other tabs and the board; updates do not resurface it. Restore it to New when you want to reconsider it. |
 
 Select a PR to see its description, linked issues, change size, checks, and personal activity history. **Take on** (`t`), **Waiting** (`w`), and **Later** (`s`) save personal decisions. Waiting and Later work with empty notes and offer default reminders you can adjust. **Purgatory** saves an indefinite local decision with Undo. **Route** (`d`) requests a reviewer on GitHub, **Respond** (`n`) posts a comment and waits for a reply, and **Close PR** (`x`) posts a reason and closes the PR. Public actions have an explicit submit dialog. Failed actions keep the dialog and do not mark the PR handled; retrying a partially completed close does not post its reason twice.
 
@@ -26,7 +26,7 @@ Inbox rows identify pull requests that directly request your review. The **+ Pin
 
 Use `j` / `k` to move, `1`–`7` to switch queues, and `/` to search. Successful decisions advance to the next PR. Local decisions offer Undo, including removal of their progress credit and any pin introduced by triage. Existing pins and subsequent changes are preserved. Background changes keep the current selection stable until you navigate or act.
 
-The repository selector applies to the inbox, CI board, timeline, and progress, and survives reloads. **All repositories** combines them. Pinned repositories are selectable even without full discovery; add them in Settings to discover their entire backlog. **View on CI board** and **Open in PR inbox** open the same PR across views, clearing filters that would hide it.
+The repository selector applies to the inbox, board, timeline, and progress, and survives reloads. **All repositories** combines them. Pinned repositories are selectable even without full discovery; add them in Settings to discover their entire backlog. **View on Board** and **Open in Inbox** open the same PR across views, clearing filters that would hide it.
 
 An author’s reply or new commits, a submitted review, a draft becoming ready, or a relevant CI completion can bring waiting work back. Reminder deadlines are checked while the app is open and on return. Bot comments and your own replies do not trigger a response notification. Personal notes and reminders stay in Pingboard; GitHub labels and assignments are not used to store them.
 
@@ -36,9 +36,9 @@ An author’s reply or new commits, a submitted review, a draft becoming ready, 
 
 Hover, focus, or tap a circle for dates, actors, and event details. Nearby events share a numbered marker. The history includes comments, reviews, commits, labels, draft/ready changes, review requests, reopenings, and merge/close events. Commit timestamps describe the commit, which may differ from when it was pushed. Pink markers identify your private Pingboard triage decisions; historical private decisions are never inferred from GitHub.
 
-The view shares repository, search, and draft filters with the inbox. Filter to **On CI board**, **Open**, **Merged / closed**, or **Purgatory**; Purgatory is excluded elsewhere. Click a title to open that PR in the inbox, or its **CI board ↗** shortcut to continue work. Viewing the timeline never changes triage or earns progress.
+The view shares repository, search, and draft filters with the inbox. Filter to **On board**, **Open**, **Merged / closed**, or **Purgatory**; Purgatory is excluded elsewhere. Click a title to open that PR in the inbox, or its **Board ↗** shortcut to continue work. Viewing the timeline never changes triage or earns progress.
 
-The table is one continuously scrollable list. Lightweight PR rows appear immediately; detailed history loads for visible rows first, with a few nearby rows prefetched. Scrolling reprioritizes pending work, and scrolling back reuses cached history. A separate paginated backfill finds recently merged and closed PRs. Requests share discovery's pacing, retries, and quota guards; leaving the view stops additional history requests. Cached history survives reloads, resumes interrupted API pages, and refreshes after ten minutes or a PR update. Pending/partial histories are labeled explicitly and failures offer **Retry history**. The archive is stored separately from credited activity and included in backups. Historical CI runs are not included in this first version; the CI board remains the view for current checks.
+The table is one continuously scrollable list. Lightweight PR rows appear immediately; detailed history loads for visible rows first, with a few nearby rows prefetched. Scrolling reprioritizes pending work, and scrolling back reuses cached history. A separate paginated backfill finds recently merged and closed PRs. Requests share discovery's pacing, retries, and quota guards; leaving the view stops additional history requests. Cached history survives reloads, resumes interrupted API pages, and refreshes after ten minutes or a PR update. Pending/partial histories are labeled explicitly and failures offer **Retry history**. The archive is stored separately from credited activity and included in backups. Historical CI runs are not included in this first version; the board remains the view for current checks.
 
 ## Progress
 
@@ -48,7 +48,7 @@ Work continuously through the inbox at your own pace. Configure the daily goal i
 
 **Progress** shows daily activity over the last 14 days, the untriaged backlog and its oldest item, work needing you now, and repository arrivals/merges/closures. Personal activity and repository outcomes have separate attribution. Tracking starts when a repository is added: Pingboard does not invent historical triage. Recent GitHub comments and reviews can be recognized during sync, but only the latest five of each are fetched per PR, so this is not a complete audit of activity outside Pingboard. All confirmed actions performed in Pingboard are recorded.
 
-## CI board
+## Board
 
 The board follows PRs you took on, marked Waiting/Later, or manually pinned through CI, review, and merge. By default it groups them into **Updated**, **In progress**, **Waiting**, **Later**, **Untriaged pins**, and **Resolved**. Waiting, Later, untriaged pins, and resolved PRs start collapsed. A due reminder or relevant update moves a follow-up into Updated automatically. Taking it on acknowledges that update and puts it in In progress. Newly discovered PRs do not enter the board until you triage or pin them.
 

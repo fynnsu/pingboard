@@ -150,7 +150,7 @@ try {
   await rendered();
   assert.equal(await page.locator(".timeline-table tbody tr").count(), 1);
   assert.equal(await page.locator(".timeline-marker.event-local").count(), 1, "personal triage has its own marker");
-  await page.getByRole("button", { name: "Open acme/widgets#2 on CI board", exact: true }).click();
+  await page.getByRole("button", { name: "Open acme/widgets#2 on board", exact: true }).click();
   await page.waitForFunction(() => state.page === "board" && state.cursor === "acme/widgets#2");
   await page.getByRole("button", { name: "Timeline", exact: true }).click();
   await page.locator(".timeline-title").click();
