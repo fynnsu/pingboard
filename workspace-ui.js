@@ -186,17 +186,43 @@ const WorkUI = {
     if (type === "purgatory") return Work.decide(item, { status: "purgatory" });
     const labels = { wait: "Wait for a response", later: "Revisit later", route: "Request a reviewer", comment: "Respond on GitHub", close: "Close pull request" };
     const decision = Work.decision(item);
-    const due = new Date();
-    due.setDate(due.getDate() + (type === "later" ? 1 : 7));
-    due.setHours(9, 0, 0, 0);
-    const localDate = new Date(due.getTime() - due.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    const hasQuickDurations = type !== "close";
+    const quickDurations = [["1h", 60 * 60 * 1000], ["3h", 3 * 60 * 60 * 1000], ["1d", 24 * 60 * 60 * 1000], ["3d", 3 * 24 * 60 * 60 * 1000], ["1w", 7 * 24 * 60 * 60 * 1000]];
+    const localDateValue = (date) => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    let selectedQuickDuration = "1d";
     const note = el("textarea", { rows: 3, placeholder: "Optional — what needs to happen next?" });
     note.value = decision?.note || "";
     const body = el("textarea", { rows: 5, placeholder: type === "close" ? "Explain why this PR is being closed, with a duplicate link if applicable." : "Your response to the contributor…" });
     const reviewer = el("input", { type: "text", placeholder: "GitHub username", autocomplete: "off" });
     const waitingFor = el("select", { "aria-label": "Waiting for" }, [["author", "Author"], ["reviewer", "Reviewer"], ["ci", "CI"]].map(([value, text]) => el("option", { value, text })));
     waitingFor.value = decision?.waitingFor || "author";
-    const when = el("input", { type: "datetime-local", value: localDate });
+    const when = el("input", { type: "datetime-local", value: localDateValue(new Date(Date.now() + 24 * 60 * 60 * 1000)), "aria-label": "Remind me if still waiting", oninput: () => {
+      selectedQuickDuration = null;
+      updateQuickDurationState();
+    } });
+    const quickDurationButtons = hasQuickDurations ? quickDurations.map(([label, milliseconds]) => el("button", {
+      class: `btn quick-duration${label === selectedQuickDuration ? " selected" : ""}`,
+      type: "button",
+      text: label,
+      title: `Remind me in ${label}`,
+      "aria-label": `Remind me in ${label}`,
+      "aria-pressed": String(label === selectedQuickDuration),
+      onclick: () => {
+        selectedQuickDuration = label;
+        when.value = localDateValue(new Date(Date.now() + milliseconds));
+        updateQuickDurationState();
+        error.textContent = "";
+      }
+    })) : [];
+    const updateQuickDurationState = () => quickDurationButtons.forEach((button, index) => {
+      const selected = quickDurations[index][0] === selectedQuickDuration;
+      button.classList.toggle("selected", selected);
+      button.setAttribute("aria-pressed", String(selected));
+    });
+    const quickDurationsControl = el("div", { class: "quick-durations", role: "group", "aria-label": "Quick follow-up times" }, quickDurationButtons);
+    const reminderField = hasQuickDurations
+      ? el("div", { class: "field" }, [el("span", { class: "field-label", text: "Remind me if still waiting" }), quickDurationsControl, el("label", { class: "custom-time" }, ["Custom time", when])])
+      : null;
     const error = el("p", { class: "t-bad", role: "alert" });
     const modal = {};
     const generation = Work.generation;
@@ -261,7 +287,7 @@ const WorkUI = {
       ["comment", "close"].includes(type) ? el("label", { class: "field" }, [type === "close" ? "Reason · posted publicly on GitHub" : "Comment · posted publicly on GitHub", body]) : null,
       type !== "close" ? el("label", { class: "field" }, ["Private note · optional", note]) : null,
       type === "wait" ? el("label", { class: "field" }, ["Waiting for", waitingFor]) : null,
-      type !== "close" ? el("label", { class: "field" }, ["Remind me if still waiting", when]) : null,
+      type !== "close" ? reminderField : null,
       el("p", { class: "muted small", text: ["wait", "later"].includes(type) ? "This saves a personal decision. It does not post to GitHub. Relevant replies and updates can bring the PR back sooner." : type === "close" ? "This posts your reason, then closes the PR on GitHub." : "The PR returns to Needs me when a response arrives or the reminder is due." }),
       error, el("div", { class: "choices" }, [send, this.button("Cancel", closeModal)])
     ]));

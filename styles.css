@@ -528,6 +528,10 @@ a.num:hover { text-decoration: underline; color: var(--text); }
 .triage-modal { max-width: 620px; max-height: calc(100dvh - 50px); overflow-y: auto; }
 .triage-modal textarea, .settings-body textarea { width: 100%; resize: vertical; box-sizing: border-box; }
 .triage-modal .field { margin-bottom: 12px; }
+.triage-modal .field-label, .triage-modal .custom-time { display: block; margin-bottom: 6px; }
+.quick-durations { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.quick-duration { min-width: 46px; justify-content: center; }
+.quick-duration.selected { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
 .triage-modal .choices { margin-top: 12px; flex-wrap: wrap; }
 .main.progress-view { display: block; overflow-y: auto; }
 .main.progress-view > .board, .main.progress-view > .detail, .main.progress-view > .divider { display: none; }
