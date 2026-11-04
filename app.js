@@ -194,7 +194,6 @@ const state = {
 
   cursor: null,
   page: "inbox",
-  filter: "all",
   query: "",
   modal: null,
   pending: [],            // deferred actions: [{id, label, timer}]
@@ -1121,25 +1120,10 @@ function shiftPin(delta) {
   scrollCursorIntoView();
 }
 
-const FILTERS = [
-  { id: "all", label: "All", test: () => true },
-  { id: "failing", label: "Failing", test: (pr) => pr?.state === "OPEN" && pr.ci.fail > 0 },
-  { id: "running", label: "Running", test: (pr) => pr?.state === "OPEN" && pr.ci.state === "running" },
-  { id: "green", label: "Green", test: (pr) => pr?.state === "OPEN" && pr.ci.state === "passed" },
-  { id: "noci", label: "No CI", test: (pr) => pr?.state === "OPEN" && pr.ci.state === "none" },
-  { id: "closed", label: "Closed", test: (pr) => Boolean(pr) && pr.state !== "OPEN" }
-];
-
 /* The selected PR stays listed even if a refresh moves it out of the filter, so
    actions never silently retarget to another row. */
 function matchesView(pin) {
   return isBoardPin(pin) && (pin.key === state.cursor || matchesFilter(pin));
-}
-
-function setFilter(id) {
-  state.filter = id;
-  reselect();
-  render();
 }
 
 /* After the user changes what is shown, select the first real match. */
@@ -1153,8 +1137,6 @@ function matchesFilter(pin) {
   const item = Work.ref(pin.key);
   if (Work.boardQueue !== "all" && (!item || Workflow.queue(item, Work.decision(item)) !== Work.boardQueue)) return false;
   const pr = state.data.get(pin.key);
-  const filter = FILTERS.find((item) => item.id === state.filter) || FILTERS[0];
-  if (!filter.test(pr)) return false;
   const query = state.query.trim().toLowerCase();
   if (!query) return true;
   const haystack = `${pin.repo}#${pin.number} ${pr?.title || ""} ${pr?.author || ""} ${(pr?.labels || []).map((label) => label.name).join(" ")}`.toLowerCase();
@@ -1508,6 +1490,7 @@ function buildShell() {
     el("header", { class: "top" }, [
       el("div", { class: "brand" }, [el("span", { class: "brand-dot" }), "Pingboard"]),
       el("nav", { id: "workspace-nav", class: "workspace-nav", "aria-label": "Workspace pages" }),
+      el("select", { id: "workspace-repo", class: "workspace-repo", "aria-label": "Repository", onchange: (event) => Work.setRepo(event.target.value) }),
       el("div", { class: "chips", id: "chips" }),
       el("input", {
         id: "filter",
@@ -1588,20 +1571,9 @@ function applyBoardWidth(main = document.querySelector(".main")) {
 }
 
 function renderTop() {
-  document.querySelector("#chips").hidden = ["timeline", "progress"].includes(state.page);
-  if (state.page !== "board") WorkUI.renderChips();
-  else {
-  const counts = Object.fromEntries(FILTERS.map((filter) => [filter.id, 0]));
-  for (const pin of state.board.pins) {
-    if (!isBoardPin(pin)) continue;
-    const pr = state.data.get(pin.key);
-    for (const filter of FILTERS) if (filter.test(pr)) counts[filter.id] += 1;
-  }
-  document.querySelector("#chips").replaceChildren(...FILTERS.map((filter) => el("button", {
-    class: `chip-btn f-${filter.id}${state.filter === filter.id ? " active" : ""}`,
-    onclick: () => setFilter(filter.id)
-  }, [filter.label, el("span", { class: "count", text: String(counts[filter.id]) })])));
-  }
+  const chips = document.querySelector("#chips");
+  chips.hidden = ["board", "timeline", "progress"].includes(state.page);
+  if (state.page === "inbox") WorkUI.renderChips();
 
   const busy = refreshActive > 0;
   const rate = state.rate.remaining;
@@ -1722,7 +1694,7 @@ function renderBoard(index) {
     ]));
     return;
   }
-  const filtering = state.filter !== "all" || Work.boardQueue !== "all" || state.query.trim();
+  const filtering = Work.boardQueue !== "all" || state.query.trim();
   // Keep the native select mounted during background refreshes. Replacing a
   // focused select dismisses its popup before the user can choose an option.
   const header = board.querySelector(":scope > .board-workflow") || el("div", { class: "board-workflow" }, [
@@ -2224,7 +2196,6 @@ function signOut(message = "") {
   state.user = null;
   state.modal = null;
   state.query = "";
-  state.filter = "all";
   for (const item of state.pending) clearTimeout(item.timer);
   state.pending = [];
   state.toasts = [];
@@ -2749,7 +2720,6 @@ const HELP = [
   ["shift+a", "approve"],
   ["shift+m", "merge or auto-merge"],
   ["z", "undo a comment or branch update before it is sent"],
-  ["1 – 6", "filter: all · failing · running · green · no CI · closed"],
   ["/", "filter by text"],
   [". / shift+r", "refresh this PR / everything"],
   ["?", "this help"],
@@ -2800,12 +2770,10 @@ const KEYS = {
     state.query = "";
     const input = document.querySelector("#filter");
     if (input) input.value = "";
-    setFilter("all");
+    reselect();
+    render();
   }
 };
-FILTERS.forEach((filter, index) => {
-  KEYS[String(index + 1)] = () => setFilter(filter.id);
-});
 
 document.addEventListener("keydown", (event) => {
   if (!state.user || event.metaKey || event.ctrlKey || event.altKey) return;

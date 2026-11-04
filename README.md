@@ -50,7 +50,7 @@ Work continuously through the inbox at your own pace. Configure the daily goal i
 
 The board follows PRs you took on, marked Waiting/Later, or manually pinned through CI, review, and merge. By default it groups them into **Updated**, **In progress**, **Waiting**, **Later**, **Untriaged pins**, and **Resolved**. Waiting, Later, untriaged pins, and resolved PRs start collapsed. A due reminder or relevant update moves a follow-up into Updated automatically. Taking it on acknowledges that update and puts it in In progress. Newly discovered PRs do not enter the board until you triage or pin them.
 
-Choose **Group by → My groups** to use your existing manual organization; switching views preserves those groups and their order. Filter by triage status alongside the CI filters. Notes and reminders can be updated from either view. Unpinning removes a PR from this working set while preserving its inbox decision and history. Purgatory hides a PR from either board view without discarding its old pin or group.
+Choose **Group by → My groups** to use your existing manual organization; switching views preserves those groups and their order. Filter by triage status when you need to focus the board. Notes and reminders can be updated from either view. Unpinning removes a PR from this working set while preserving its inbox decision and history. Purgatory hides a PR from either board view without discarding its old pin or group.
 
 Each row shows both personal triage and CI status and, where there is an obvious next step, a button for it.
 
