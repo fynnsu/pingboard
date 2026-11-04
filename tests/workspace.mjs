@@ -105,6 +105,8 @@ try {
   await page.evaluate(() => { Work.queue = "all"; Work.select("acme/widgets#10"); });
   fixture.failComments = true;
   await page.getByRole("button", { name: "Respond · n", exact: true }).click();
+  assert.deepEqual(await page.locator(".quick-duration").allTextContents(), ["1h", "3h", "1d", "3d", "1w"]);
+  assert.equal(await page.getByRole("button", { name: "Remind me in 1d", exact: true }).getAttribute("aria-pressed"), "true", "Respond uses the same 1d quick reminder default");
   await page.getByLabel("Comment · posted publicly on GitHub").fill("Could you add a regression test?");
   await page.getByRole("button", { name: "Post response & wait", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "Simulated comment rejection" }).waitFor();

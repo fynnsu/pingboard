@@ -47,10 +47,16 @@ try {
   await page.waitForFunction(() => !Work.saving && Work.decisions.get("PR_1")?.status === "needs_me");
   await select(2);
   await page.getByRole("button", { name: "Waiting · w", exact: true }).click();
+  assert.deepEqual(await page.locator(".quick-duration").allTextContents(), ["1h", "3h", "1d", "3d", "1w"]);
+  assert.equal(await page.getByRole("button", { name: "Remind me in 1d", exact: true }).getAttribute("aria-pressed"), "true", "1d is the default quick reminder");
+  await page.getByRole("button", { name: "Remind me in 3h", exact: true }).click();
+  assert.equal(await page.getByRole("button", { name: "Remind me in 3h", exact: true }).getAttribute("aria-pressed"), "true");
+  assert.equal(await page.getByRole("button", { name: "Remind me in 1d", exact: true }).getAttribute("aria-pressed"), "false");
   await page.getByRole("button", { name: "Save waiting state", exact: true }).click();
   await page.waitForFunction(() => !Work.saving && Work.decisions.get("PR_2")?.status === "waiting");
   await select(3);
   await page.getByRole("button", { name: "Later · s", exact: true }).click();
+  assert.equal(await page.getByRole("button", { name: "Remind me in 1d", exact: true }).getAttribute("aria-pressed"), "true", "1d is also the default for Later");
   await page.getByRole("button", { name: "Defer PR", exact: true }).click();
   await page.waitForFunction(() => !Work.saving && Work.decisions.get("PR_3")?.status === "later");
   assert.equal(await page.evaluate(() => Work.decisions.get("PR_3").note), "", "deferring does not require a reason");

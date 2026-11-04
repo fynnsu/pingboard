@@ -53,7 +53,7 @@ const Work = {
         },
         // Backfilling an archive must not fabricate arrivals, wake-ups or credit.
         observe: (items) => this.observe(items.filter((item) => !this.items.has(item.id)), { historical: true }, generation),
-        active: () => state.page === "timeline", changed: () => render()
+        active: () => ["timeline", "inbox", "board"].includes(state.page), changed: () => render()
       });
       navigator.storage?.persist?.().catch(() => {});
       this.tick(true);
@@ -266,9 +266,15 @@ const Work = {
           triagedAt: values.status === "new" ? null : before?.triagedAt || now, updatedAt: now, dueAt: values.dueAt || null,
           waitingFor: values.waitingFor || null, note: values.note ?? before?.note ?? "", reason: "" };
         if (before && ["status", "dueAt", "waitingFor", "note"].every((field) => decision[field] === before[field]) && !before.reason) return null;
+        const waitingLabels = { author: "Author", reviewer: "Reviewer", ci: "CI" };
+        const details = [
+          values.status === "waiting" && decision.waitingFor ? `Waiting for ${waitingLabels[decision.waitingFor] || decision.waitingFor}` : null,
+          decision.dueAt ? `Follow up ${new Date(decision.dueAt).toLocaleString()}` : null,
+          decision.note || null
+        ].filter(Boolean);
         const event = { id: Workflow.id(), itemId: item.id, repo: item.repo, number: item.number,
           kind: values.status === "new" ? "restore" : before?.triagedAt ? "followup" : "triage", actor: this.login, at: now, source: "pingboard",
-          message: `${Workflow.queues[values.status]}${decision.note ? ` · ${decision.note}` : ""}` };
+          message: [Workflow.queues[values.status], ...details].join(" · ") };
         return { decision, event };
       });
       if (generation !== this.generation) return false;
