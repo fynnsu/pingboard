@@ -48,7 +48,7 @@ try {
 
   await page.getByRole("button", { name: "Waiting…", exact: true }).click();
   await page.getByLabel("Private note · optional", { exact: true }).fill("Wait for the new CI run");
-  await page.getByLabel("Waiting for", { exact: true }).selectOption("ci");
+  await page.getByRole("button", { name: "Waiting for CI", exact: true }).click();
   await page.getByRole("button", { name: "Save waiting state", exact: true }).click();
   await page.waitForFunction(() => Work.decisions.get("PR_1")?.status === "waiting" && !Work.saving);
   assert.deepEqual(await rowKeys(), ["acme/widgets#1"], "waiting PRs remain in the working set");
@@ -60,6 +60,10 @@ try {
   await page.waitForFunction(() => state.page === "inbox" && state.cursor === "acme/widgets#1");
   assert.match(await page.locator(".triage-panel").innerText(), /Wait for the new CI run/);
   assert.match(await page.locator('.inbox-row[data-key="acme/widgets#1"]').innerText(), /On board/);
+  await page.getByRole("button", { name: "Waiting · w", exact: true }).click();
+  assert.equal(await page.getByLabel("Private note · optional", { exact: true }).inputValue(), "", "private notes start empty when reopening an action");
+  assert.equal(await page.getByRole("button", { name: "Waiting for CI", exact: true }).getAttribute("aria-pressed"), "true");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
 
   await selectRepo("acme/runner");
   await page.waitForFunction(() => state.cursor === "acme/runner#1");
