@@ -2179,10 +2179,10 @@ function renderDetail(index) {
 
   blocks.push(el("div", { class: "detail-head" }, [
     el("div", { class: "btn-row detail-tools" }, [
-      btn("Open on GitHub ↗", () => openUrl(pr.url)),
       pinByKey(pr.key) ? btn("Move to group…", () => openGroupPicker(pinByKey(pr.key))) : btn("Pin to board", () => addPin(pr.repo, pr.number)),
       btn("Refresh", () => queueRefresh(pin, { force: true })),
-      pinByKey(pr.key) ? btn("Unpin", () => removePin(pr.key)) : null
+      pinByKey(pr.key) ? btn("Unpin", () => removePin(pr.key)) : null,
+      btn("Open on GitHub ↗", () => openUrl(pr.url))
     ]),
     el("div", { class: "detail-meta" }, [
       el("a", { href: pr.url, target: "_blank", rel: "noopener", text: `${pr.repo}#${pr.number}` }),
