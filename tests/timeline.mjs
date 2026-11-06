@@ -59,6 +59,7 @@ try {
   const initialDecisions = await page.evaluate(() => Work.decisions.size);
   assert.equal(await page.evaluate(() => Work.items.has("PR_101")), false, "old merged PR is outside initial discovery");
   const initialEvents = await page.evaluate(() => Work.events.size);
+  const timelineSince = await page.evaluate(() => new Date(Timeline.range(state.prefs.timelineDays).start).toISOString());
   await page.getByRole("button", { name: "Timeline", exact: true }).click();
   await settled();
   assert.equal(await page.locator(".timeline-table tbody tr").count(), 14);
@@ -71,7 +72,7 @@ try {
   await page.getByRole("button", { name: "Retry history", exact: true }).click();
   await page.waitForFunction(() => Work.history.get("PR_1")?.complete && !Work.timeline.busy);
   assert.equal(await page.evaluate(() => Work.history.get("PR_1").events.length), 61);
-  const historyCalls = () => fixture.calls.filter((call) => call.body?.query?.includes("PingboardTimeline("));
+  const historyCalls = () => fixture.calls.filter((call) => call.body?.query?.includes("PingboardTimeline(") && call.body.variables.since === timelineSince);
   assert.equal(historyCalls().filter((call) => call.body.variables.id === "PR_1" && !call.body.variables.cursor).length, 1, "retry resumes second page");
   const requestCount = historyCalls().length;
   await page.evaluate(() => render());

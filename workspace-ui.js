@@ -195,11 +195,27 @@ const WorkUI = {
     const localDateValue = (date) => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
     let selectedQuickDuration = "1d";
     const note = el("textarea", { rows: 3, placeholder: "Optional — what needs to happen next?" });
-    note.value = decision?.note || "";
     const body = el("textarea", { rows: 5, placeholder: type === "close" ? "Explain why this PR is being closed, with a duplicate link if applicable." : "Your response to the contributor…" });
     const reviewer = el("input", { type: "text", placeholder: "GitHub username", autocomplete: "off" });
-    const waitingFor = el("select", { "aria-label": "Waiting for" }, [["author", "Author"], ["reviewer", "Reviewer"], ["ci", "CI"]].map(([value, text]) => el("option", { value, text })));
-    waitingFor.value = decision?.waitingFor || "author";
+    const waitingOptions = [["author", "Author"], ["reviewer", "Reviewer"], ["ci", "CI"]];
+    let selectedWaitingFor = decision?.waitingFor || "author";
+    const waitingForButtons = waitingOptions.map(([value, text]) => el("button", {
+      class: `btn waiting-for${value === selectedWaitingFor ? " selected" : ""}`,
+      type: "button",
+      text,
+      title: `Waiting for ${text}`,
+      "aria-label": `Waiting for ${text}`,
+      "aria-pressed": String(value === selectedWaitingFor),
+      onclick: () => {
+        selectedWaitingFor = value;
+        waitingForButtons.forEach((button, index) => {
+          const selected = waitingOptions[index][0] === selectedWaitingFor;
+          button.classList.toggle("selected", selected);
+          button.setAttribute("aria-pressed", String(selected));
+        });
+      }
+    }));
+    const waitingForControl = el("div", { class: "waiting-for-buttons", role: "group", "aria-label": "Waiting for" }, waitingForButtons);
     const when = el("input", { type: "datetime-local", value: localDateValue(new Date(Date.now() + 24 * 60 * 60 * 1000)), "aria-label": "Remind me if still waiting", oninput: () => {
       selectedQuickDuration = null;
       updateQuickDurationState();
@@ -266,7 +282,7 @@ const WorkUI = {
         }
         if (generation !== Work.generation) return;
         const saved = await Work.decide(item, { status: type === "later" ? "later" : type === "close" ? "needs_me" : "waiting",
-          dueAt: type === "close" ? null : dueAt.toISOString(), waitingFor: type === "route" ? "reviewer" : waitingFor.value,
+          dueAt: type === "close" ? null : dueAt.toISOString(), waitingFor: type === "route" ? "reviewer" : selectedWaitingFor,
           note: type === "close" ? publicBody : type === "route" ? `Review requested from ${target}${privateNote ? ` · ${privateNote}` : ""}` : privateNote
         }, { undo: !["route", "comment", "close"].includes(type), announce: type !== "close", track: type !== "close" });
         if (!saved) throw new Error("The local decision was not saved. Retry to save it; confirmed GitHub actions will not be sent again.");
@@ -290,7 +306,7 @@ const WorkUI = {
       type === "route" ? el("label", { class: "field" }, ["Reviewer · sends a GitHub review request", reviewer]) : null,
       ["comment", "close"].includes(type) ? el("label", { class: "field" }, [type === "close" ? "Reason · posted publicly on GitHub" : "Comment · posted publicly on GitHub", body]) : null,
       type !== "close" ? el("label", { class: "field" }, ["Private note · optional", note]) : null,
-      type === "wait" ? el("label", { class: "field" }, ["Waiting for", waitingFor]) : null,
+      type === "wait" ? el("div", { class: "field" }, [el("span", { class: "field-label", text: "Waiting for" }), waitingForControl]) : null,
       type !== "close" ? reminderField : null,
       el("p", { class: "muted small", text: ["wait", "later"].includes(type) ? "This saves a personal decision. It does not post to GitHub. Relevant replies and updates can bring the PR back sooner." : type === "close" ? "This posts your reason, then closes the PR on GitHub." : "The PR returns to Needs me when a response arrives or the reminder is due." }),
       error, el("div", { class: "choices" }, [send, this.button("Cancel", closeModal)])
